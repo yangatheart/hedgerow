@@ -3,6 +3,8 @@
 Every snapshot is stored with source + fetch time so freshness can be shown (FR-04).
 """
 import json
+import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -12,6 +14,22 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 STALE_AFTER = timedelta(hours=6)  # older snapshots are shown as stale
 REFRESH_AFTER = timedelta(hours=1)  # don't refetch more often than this
+HEADERS = {"User-Agent": "HedgeRow/0.1 (farm risk MVP)"}
+log = logging.getLogger("uvicorn.error")
+
+
+def _get(url: str, params: dict, timeout: float) -> httpx.Response:
+    """GET with a few retries on rate limits (429) and server errors, which shared cloud IPs hit often."""
+    for attempt in range(3):
+        r = httpx.get(url, params=params, timeout=timeout, headers=HEADERS)
+        if r.status_code != 429 and r.status_code < 500:
+            break
+        log.warning("Weather API %s returned %s (attempt %d): %s", url, r.status_code, attempt + 1, r.text[:200])
+        time.sleep(1.5 * (attempt + 1))
+    if r.is_error:
+        log.error("Weather API %s failed with %s: %s", url, r.status_code, r.text[:300])
+    r.raise_for_status()
+    return r
 
 
 def utcnow() -> datetime:
@@ -23,8 +41,7 @@ def iso(dt: datetime) -> str:
 
 
 def geocode(query: str, count: int = 6) -> list[dict]:
-    r = httpx.get(GEOCODE_URL, params={"name": query, "count": count, "language": "en"}, timeout=10)
-    r.raise_for_status()
+    r = _get(GEOCODE_URL, {"name": query, "count": count, "language": "en"}, timeout=10)
     out = []
     for g in r.json().get("results", []) or []:
         parts = [g.get("name"), g.get("admin1"), g.get("country")]
@@ -52,8 +69,7 @@ def fetch_forecast(lat: float, lon: float) -> dict:
             "relative_humidity_2m_mean", "weather_code",
         ]),
     }
-    r = httpx.get(FORECAST_URL, params=params, timeout=15)
-    r.raise_for_status()
+    r = _get(FORECAST_URL, params, timeout=15)
     return r.json()
 
 
@@ -89,7 +105,9 @@ def get_weather(conn, farm, force: bool = False) -> dict:
             return {"status": "fresh", "snapshot_id": cur.lastrowid, "fetched_at": iso(now),
                     "data": data, "error": None, "source": SOURCE}
         except Exception as e:  # network/API failure: fall back safely
-            error = f"Weather service unavailable: {type(e).__name__}"
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            error = f"Weather service unavailable ({code or type(e).__name__})"
+            log.error("Forecast fetch failed for farm %s: %r", farm["id"], e)
 
     if not same_place:
         return {"status": "unavailable", "error": error or "No weather data yet", "data": None,
