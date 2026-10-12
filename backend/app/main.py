@@ -8,7 +8,7 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import risk_engine, weather
+from . import advice, crops, risk_engine, weather
 from .db import get_conn, init_db
 
 FRONTEND = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
@@ -413,34 +413,101 @@ def run_assessment(conn, farm: dict, wx: dict) -> str:
     return run_id
 
 
+def _farm_state(conn, farm_id: int, user_id: int, refresh: bool = False) -> dict:
+    """Farm + weather + current risk run (re-assessed when weather, profile or rules changed)."""
+    farm = load_farm(conn, farm_id, user_id)
+    wx = weather.get_weather(conn, farm, force=refresh)
+    assessments, assessed_at = [], None
+    if wx["data"]:
+        last = conn.execute(
+            "SELECT run_id, assessed_at, valid_until, weather_snapshot_id, model_version FROM risk_assessments "
+            "WHERE farm_id=? ORDER BY id DESC LIMIT 1", (farm_id,)).fetchone()
+        reuse = (last and last["weather_snapshot_id"] == wx["snapshot_id"]
+                 and last["model_version"] == risk_engine.MODEL_VERSION
+                 and last["assessed_at"] > farm["updated_at"] and last["valid_until"] > now_iso())
+        run_id = last["run_id"] if reuse else run_assessment(conn, farm, wx)
+        assessments = _load_run(conn, farm_id, run_id)
+        assessed_at = assessments[0]["assessed_at"] if assessments else now_iso()
+    summary = weather.summarize(wx["data"]) if wx["data"] else None
+    measured = weather.measured_rain(farm["latitude"], farm["longitude"]) if wx["data"] else None
+    return {"farm": farm, "wx": wx, "summary": summary, "measured": measured,
+            "assessments": assessments, "assessed_at": assessed_at}
+
+
+def _today(summary: dict | None) -> date:
+    t = ((summary or {}).get("current") or {}).get("time")
+    return date.fromisoformat(t[:10]) if t else datetime.now(timezone.utc).date()
+
+
+def _crop_items(farm: dict) -> list[dict]:
+    return [p for p in farm["production_items"] if p["type"] != "livestock"]
+
+
+def _crop_advice(state: dict, item: dict) -> dict:
+    return advice.crop_advice(item, crops.match_crop(item["name"]), state["summary"], state["measured"],
+                              state["assessments"], _today(state["summary"]))
+
+
+def _crop_widget(a: dict) -> dict:
+    w = a.get("water") or {}
+    return {"id": a["item"]["id"], "name": a["item"]["name"], "emoji": a["guide"]["emoji"],
+            "guide_name": a["guide"]["name"], "in_guide": a["in_guide"], "stage": a["stage"]["label"],
+            "needs_planting_date": a["stage"].get("needs_planting_date", False),
+            "water_status": w.get("status"), "add_l_per_m2": w.get("add_l_per_m2"),
+            "alerts": len(a["weather_ahead"])}
+
+
+def _weather_out(state: dict) -> dict:
+    wx = state["wx"]
+    return {"status": wx["status"], "fetched_at": wx["fetched_at"], "error": wx["error"], "source": wx.get("source"),
+            "summary": state["summary"], "measured_rain": state["measured"]}
+
+
 @app.get("/api/farms/{farm_id}/dashboard")
 def dashboard(farm_id: int, refresh: bool = False, user_id: int = Depends(registered_user)):
     with get_conn() as conn:
-        farm = load_farm(conn, farm_id, user_id)
-        wx = weather.get_weather(conn, farm, force=refresh)
-        assessments, assessed_at = [], None
-        if wx["data"]:
-            last = conn.execute(
-                "SELECT run_id, assessed_at, valid_until, weather_snapshot_id, model_version FROM risk_assessments "
-                "WHERE farm_id=? ORDER BY id DESC LIMIT 1", (farm_id,)).fetchone()
-            reuse = (last and last["weather_snapshot_id"] == wx["snapshot_id"]
-                     and last["model_version"] == risk_engine.MODEL_VERSION
-                     and last["assessed_at"] > farm["updated_at"] and last["valid_until"] > now_iso())
-            run_id = last["run_id"] if reuse else run_assessment(conn, farm, wx)
-            assessments = _load_run(conn, farm_id, run_id)
-            assessed_at = assessments[0]["assessed_at"] if assessments else now_iso()
+        st = _farm_state(conn, farm_id, user_id, refresh)
+        farm = st["farm"]
         return {
             "farm": farm,
-            "weather": {
-                "status": wx["status"], "fetched_at": wx["fetched_at"], "error": wx["error"],
-                "source": wx.get("source"),
-                "summary": weather.summarize(wx["data"]) if wx["data"] else None,
-            },
-            "assessments": assessments,
-            "assessed_at": assessed_at,
+            "weather": _weather_out(st),
+            "assessments": st["assessments"],
+            "assessed_at": st["assessed_at"],
             "model_version": risk_engine.MODEL_VERSION,
             "hints": risk_engine.missing_hints(farm, farm["conditions"]),
+            "crops": [_crop_widget(_crop_advice(st, i)) for i in _crop_items(farm)],
         }
+
+
+@app.get("/api/farms/{farm_id}/crops/{item_id}")
+def crop_page(farm_id: int, item_id: int, user_id: int = Depends(registered_user)):
+    with get_conn() as conn:
+        st = _farm_state(conn, farm_id, user_id)
+        item = next((i for i in _crop_items(st["farm"]) if i["id"] == item_id), None)
+        if not item:
+            raise HTTPException(404, "Crop not found")
+        return {"farm": {k: st["farm"][k] for k in ("id", "name", "location_label")},
+                "weather": _weather_out(st), "advice": _crop_advice(st, item),
+                "caveat": crops.UK_CAVEAT, "model_version": risk_engine.MODEL_VERSION}
+
+
+class ItemUpdate(BaseModel):
+    planting_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    growth_stage: Optional[str] = Field(default=None, max_length=40)
+
+
+@app.put("/api/farms/{farm_id}/items/{item_id}")
+def update_item(farm_id: int, item_id: int, body: ItemUpdate, user_id: int = Depends(registered_user)):
+    with get_conn() as conn:
+        farm = load_farm(conn, farm_id, user_id)
+        if not any(i["id"] == item_id for i in farm["production_items"]):
+            raise HTTPException(404, "Crop not found")
+        vals = body.model_dump(exclude_unset=True)
+        if vals:
+            conn.execute(f"UPDATE production_items SET {', '.join(f'{k}=?' for k in vals)} WHERE id=?",
+                         (*vals.values(), item_id))
+            conn.execute("UPDATE farms SET updated_at=? WHERE id=?", (now_iso(), farm_id))
+    return {"ok": True}
 
 
 @app.get("/api/assessments/{assessment_id}")

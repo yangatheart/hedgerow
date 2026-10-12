@@ -8,9 +8,9 @@ const PRODUCTION = [
   ["livestock", "Livestock / poultry"], ["other", "Other"],
 ];
 const PLANT_TYPES = ["vegetables", "fruit", "field_crops", "herbs", "flowers"];
-const PLANT_SUGGESTIONS = ["Potatoes", "Tomatoes", "Wheat", "Barley", "Maize", "Oilseed rape", "Apples", "Pears",
-  "Strawberries", "Grapes", "Onions", "Carrots", "Cabbage", "Lettuce", "Peas", "Beans", "Rice", "Soybeans",
-  "Sugar beet", "Oats", "Cucumbers", "Peppers", "Basil", "Mint", "Roses", "Tulips"];
+const PLANT_SUGGESTIONS = ["Carrots", "Beetroot", "Potatoes", "Onions", "Lettuce", "Cabbage", "Kale", "Broccoli",
+  "Peas", "Broad beans", "Tomatoes", "Courgettes", "Spinach", "Strawberries", "Apples", "Wheat", "Barley",
+  "Oilseed rape", "Pears", "Leeks", "Cucumbers", "Herbs"];
 const LIVESTOCK_SUGGESTIONS = ["Cattle (beef)", "Cattle (dairy)", "Sheep", "Goats", "Pigs", "Chickens", "Ducks", "Horses"];
 const WATER = [
   ["rainfall_only", "Rainfall only"], ["rain_and_irrigation", "Rainfall and irrigation"],
@@ -125,6 +125,7 @@ const routes = {
   "": welcome, dashboard, history, profile,
   setup: (p) => setup(Number(p[0] || 1)),
   risk: (p) => riskDetail(Number(p[0])),
+  crop: (p) => cropPage(Number(p[0])),
   signin,
 };
 async function router() {
@@ -256,9 +257,9 @@ async function setup(step) {
 function stepLocation(body) {
   body.innerHTML = `
     <p class="muted">We need your location for local weather forecasts. Nothing else is shared.</p>
-    <label for="loc">Town, region or postcode</label>
+    <label for="loc">UK postcode <span class="muted small">(or town)</span></label>
     <div class="row" style="flex-wrap:nowrap">
-      <input type="search" id="loc" placeholder="e.g. Cambridge, or Iowa City" autocomplete="off">
+      <input type="search" id="loc" placeholder="e.g. CB2 1TN" autocomplete="postal-code">
       <button type="button" class="secondary" id="locbtn">Search</button>
     </div>
     <div id="locresults"></div>
@@ -297,7 +298,7 @@ function stepLocation(body) {
       const { results } = await api(`/api/geocode?q=${encodeURIComponent(q)}`);
       box.innerHTML = results.length ? `<ul class="results">${results.map((r, i) =>
         `<li><button type="button" data-i="${i}">${esc(r.label)}</button></li>`).join("")}</ul>`
-        : `<p class="muted small">No matches. Try a nearby town or region name, or enter coordinates.</p>`;
+        : `<p class="muted small">No matches. Check the postcode, try a nearby town, or enter coordinates.</p>`;
       box.querySelectorAll("button").forEach((b) => b.onclick = () => {
         const r = results[Number(b.dataset.i)];
         Object.assign(draft, { location_label: r.label, latitude: r.latitude, longitude: r.longitude, timezone: r.timezone });
@@ -344,14 +345,20 @@ function stepProduction(body) {
       ${hasPlants ? `
         <div class="card">
           <h3>Which crops or plants? <span class="muted small">(optional)</span></h3>
-          <p class="muted small">Naming crops lets us add crop-specific checks. Potatoes and tomatoes get late-blight weather alerts.</p>
+          <p class="muted small">Each crop gets its own page with tailored watering, sunlight and pest advice.</p>
           <div class="row" style="flex-wrap:nowrap">
             <input type="text" id="plantin" list="plantlist" placeholder="Start typing, e.g. Potatoes">
             <button type="button" class="secondary" id="plantadd">Add</button>
           </div>
           <datalist id="plantlist">${PLANT_SUGGESTIONS.map((s) => `<option value="${s}">`).join("")}</datalist>
-          <div class="row" style="margin-top:8px">${plants.map((p) =>
-            `<span class="tag">${esc(p.name)}<button type="button" data-rm="${esc(p.name)}" aria-label="Remove ${esc(p.name)}">×</button></span>`).join("")}</div>
+          ${plants.length ? `
+          <p style="margin:14px 0 4px"><b>When did you plant this crop?</b> <span class="muted small">(optional; used for growth stage and watering)</span></p>
+          <ul class="plantlist">${plants.map((p) => `
+            <li><span class="pl-name">${esc(p.name)}</span>
+              <input type="date" max="${new Date().toISOString().slice(0, 10)}" data-date="${esc(p.name)}" value="${esc(p.planting_date || "")}"
+                aria-label="Planting date for ${esc(p.name)}">
+              <button type="button" class="ghost pl-rm" data-rm="${esc(p.name)}" aria-label="Remove ${esc(p.name)}">×</button></li>`).join("")}
+          </ul>` : ""}
         </div>` : ""}
       ${hasLivestock ? `
         <div class="card">
@@ -375,6 +382,10 @@ function stepProduction(body) {
         p.type === "livestock" ? draft.production_types.includes("livestock") : stillPlants);
       paint();
     };
+    body.querySelectorAll("[data-date]").forEach((inp) => inp.onchange = () => {
+      const item = draft.production_items.find((p) => p.name === inp.dataset.date);
+      if (item) item.planting_date = inp.value || null;
+    });
     body.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => {
       draft.production_items = draft.production_items.filter((p) => p.name !== b.dataset.rm); paint();
     });
@@ -424,7 +435,7 @@ function stepConcern(body) {
 // Step 5 — review
 function stepReview(body) {
   const items = (t) => draft.production_items.filter((p) => (t === "livestock") === (p.type === "livestock"))
-    .map((p) => p.name + (p.area_or_count ? ` (${p.area_or_count})` : "")).join(", ");
+    .map((p) => p.name + (p.area_or_count ? ` (${p.area_or_count})` : "") + (p.planting_date ? ` (planted ${fmtDay(p.planting_date)})` : "")).join(", ");
   const row = (k, v, step) => `<dt>${k}</dt><dd>${v ? esc(v) : `<span class="muted">Not provided</span>`}
     <button type="button" class="link small" data-edit="${step}">Edit</button></dd>`;
   body.innerHTML = `
@@ -464,23 +475,76 @@ function stepReview(body) {
 // ------------------------------------------------------------------ dashboard
 function levelBadge(level) { return `<span class="badge lvl-${level}">${level} risk</span>`; }
 
+// The page is drawn as one carrot: leafy top above ground (weather), then the root runs down through
+// the below-ground sections (crops, advice, actions), ending in a root tip.
+const LEAVES_SVG = `<svg viewBox="0 0 60 150" aria-hidden="true" focusable="false">
+  <g fill="none" stroke-linecap="round">
+    <path d="M30 150 C 28 110, 10 90, 6 40" stroke="var(--leaf-2)" stroke-width="4"/>
+    <path d="M30 150 C 31 100, 36 70, 30 8" stroke="var(--leaf-1)" stroke-width="4.5"/>
+    <path d="M30 150 C 34 115, 50 95, 55 50" stroke="var(--leaf-2)" stroke-width="4"/>
+  </g>
+  <g fill="var(--leaf-1)">
+    <ellipse cx="9" cy="48" rx="6" ry="11" transform="rotate(-20 9 48)"/><ellipse cx="16" cy="78" rx="5" ry="9" transform="rotate(-35 16 78)"/>
+    <ellipse cx="29" cy="16" rx="6" ry="12"/><ellipse cx="36" cy="46" rx="5" ry="10" transform="rotate(25 36 46)"/>
+    <ellipse cx="25" cy="64" rx="5" ry="9" transform="rotate(-25 25 64)"/><ellipse cx="52" cy="58" rx="6" ry="11" transform="rotate(20 52 58)"/>
+    <ellipse cx="45" cy="88" rx="5" ry="9" transform="rotate(35 45 88)"/>
+  </g></svg>`;
+
+function plant(above, belowSections) {
+  return `
+    <div class="plant">
+      <div class="above"><div class="leaves">${LEAVES_SVG}</div><div class="above-content">${above}</div></div>
+      <div class="soil-line" aria-hidden="true"></div>
+      <div class="below">
+        ${belowSections.filter(Boolean).map((sec) => `<section class="rootsec">${sec}</section>`).join("")}
+        <div class="root-tip" aria-hidden="true"></div>
+      </div>
+    </div>`;
+}
+
 function weatherBlock(w) {
   if (w.status === "unavailable") {
     return `<div class="notice err"><b>Weather data unavailable.</b> ${esc(w.error || "")}
-      Risk assessments can't be generated without a forecast, so none are shown. Try refreshing later.</div>`;
+      Risk assessments and crop advice can't be generated without a forecast. Try refreshing later.</div>`;
   }
   const s = w.summary, c = s.current;
+  const est = (k) => s.estimated.includes(k);
   return `
     ${w.status === "stale" ? `<div class="notice warn"><b>Weather data may be out of date</b> (last updated ${fmtTime(w.fetched_at)}).
       ${esc(w.error || "")} Alerts below are based on this older forecast.</div>` : ""}
     <div class="card">
       <div class="spread"><h2 style="margin:0">Weather now</h2><span class="muted small">${esc(c.condition)}</span></div>
       <div class="wx-now"><span class="temp">${Math.round(c.temperature)}°C</span>
-        <span class="muted">Humidity ${c.humidity}% · Wind ${Math.round(c.wind_speed)} km/h · Rain ${c.precipitation} mm</span></div>
+        <span class="muted">Humidity ${Math.round(c.humidity)}% · Wind ${Math.round(c.wind_speed)} km/h · Rain ${c.precipitation ?? 0} mm</span></div>
       <div class="days" style="margin-top:12px">${s.days.map((d) => `
         <div class="day"><b>${fmtDay(d.date).split(",")[0]}</b>${Math.round(d.t_max)}° / ${Math.round(d.t_min)}°
-          <div class="muted">${(d.rain_mm ?? 0).toFixed(1)} mm${d.rain_prob != null ? ` · ${d.rain_prob}%` : ""}</div></div>`).join("")}</div>
-      <p class="muted small" style="margin:8px 0 0">Source: ${esc(w.source)} · updated ${ago(w.fetched_at)}</p>
+          <div class="muted">💧 ${(d.rain_mm ?? 0).toFixed(1)} mm${d.rain_prob != null ? ` · ${d.rain_prob}%` : ""}</div>
+          ${d.sun_h != null ? `<div class="muted">☀️ ${d.sun_h} h</div>` : ""}</div>`).join("")}</div>
+      <p class="muted small" style="margin:8px 0 0">Forecast: ${esc(s.provider)}${est("sunshine_duration") ? " (sunshine estimated from cloud cover)" : ""} · updated ${ago(w.fetched_at)}</p>
+    </div>
+    ${sunRainBlock(w)}`;
+}
+
+function sunRainBlock(w) {
+  const s = w.summary, m = w.measured_rain;
+  const next7rain = s.days.reduce((t, d) => t + (d.rain_mm || 0), 0);
+  const nextSun = s.days.filter((d) => d.sun_h != null);
+  const sunEst = s.estimated.includes("sunshine_duration");
+  const rainPast = m ? `<b>${m.mm} mm</b> <span class="muted small">measured at ${esc(m.station)}, ${m.distance_km} km away</span>`
+    : s.past_rain_mm != null ? `<b>${s.past_rain_mm} mm</b> <span class="muted small">weather model for your postcode</span>`
+    : `<span class="muted">Not available here</span>`;
+  const sunPast = s.past_sun_h != null ? `<b>${s.past_sun_h} h</b> <span class="muted small">(${(s.past_sun_h / 7).toFixed(1)} h a day)</span>`
+    : `<span class="muted">Not available from the current source</span>`;
+  return `
+    <div class="card sunrain">
+      <h2 style="margin-top:0">Sun and rain</h2>
+      <div class="sr-grid">
+        <div><span class="sr-k">💧 Rain, last 7 days</span>${rainPast}</div>
+        <div><span class="sr-k">💧 Rain, next 7 days</span><b>${next7rain.toFixed(1)} mm</b> <span class="muted small">forecast</span></div>
+        <div><span class="sr-k">☀️ Sunshine, last 7 days</span>${sunPast}</div>
+        <div><span class="sr-k">☀️ Sunshine, next 7 days</span>${nextSun.length ? `<b>${(nextSun.reduce((t, d) => t + d.sun_h, 0) / nextSun.length).toFixed(1)} h a day</b>
+          <span class="muted small">${sunEst ? "estimated" : "forecast"}</span>` : `<span class="muted">—</span>`}</div>
+      </div>
     </div>`;
 }
 
@@ -497,6 +561,21 @@ function riskCard(a) {
     </article>`;
 }
 
+function cropWidget(c) {
+  const water = c.water_status === "water" ? `💧 Add ${c.add_l_per_m2} L per m² this week`
+    : c.water_status === "wait" ? "💧 Hold off: rain is due" : c.water_status === "ok" ? "💧 No watering needed"
+    : c.water_status === "no_past_rain" ? `💧 Plan ~${c.add_l_per_m2} L per m²` : "💧 Water: no data";
+  return `
+    <a class="crop-widget" href="#/crop/${c.id}">
+      <span class="cw-emoji" aria-hidden="true">${c.emoji}</span>
+      <span class="cw-name">${esc(c.name)}</span>
+      <span class="cw-stage">${c.needs_planting_date ? "Add planting date" : esc(c.stage)}</span>
+      <span class="cw-water">${water}</span>
+      ${c.alerts ? `<span class="cw-alert">⚠️ ${c.alerts} weather alert${c.alerts > 1 ? "s" : ""}</span>` : ""}
+      ${c.in_guide ? "" : `<span class="cw-note">General advice (not in guide)</span>`}
+    </a>`;
+}
+
 async function dashboard(_, refresh = false) {
   setTabs("dashboard");
   if (!(await requireAccount())) return;
@@ -510,7 +589,8 @@ async function dashboard(_, refresh = false) {
     .map((r) => ({ ...r, hazard: a.title, aid: a.id, score: a.priority_score })))
     .sort((x, y) => (x.urgency === y.urgency ? y.score - x.score : x.urgency === "now" ? -1 : 1)).slice(0, 5);
   const f = d.farm;
-  render(`
+  const ok = d.weather.status !== "unavailable";
+  const above = `
     <div class="spread">
       <div><h1 style="margin-bottom:2px">${esc(f.name || "My farm")}</h1>
         <p class="muted small">📍 ${esc(f.location_label)} · ${f.production_types.map((t) => label(PRODUCTION, t)).join(", ") || "No production types yet"}</p></div>
@@ -518,25 +598,120 @@ async function dashboard(_, refresh = false) {
     </div>
     <p class="muted small">Risks checked ${d.assessed_at ? fmtTime(d.assessed_at) : "—"} · rules ${esc(d.model_version)}</p>
     ${weatherBlock(d.weather)}
-    ${d.weather.status !== "unavailable" ? `
-      ${actions.length ? `<h2>Top actions</h2><div class="card"><ul class="actions-list">${actions.map((r) => `
-        <li><span class="urg ${r.urgency}">${URGENCY[r.urgency]}</span> · <span class="muted small">${esc(r.hazard)}</span><br>
-        <a href="#/risk/${r.aid}" style="color:inherit;text-decoration:none">${esc(r.action)}</a></li>`).join("")}</ul></div>` : ""}
-      <h2>Risk alerts</h2>
-      ${elevated.length ? elevated.map(riskCard).join("") :
-        `<div class="notice info">✅ No elevated risks in the current forecast for the hazards we check.</div>`}
-      ${low.length ? `<h2>Checked: no elevated risk</h2><div class="card"><ul class="actions-list">${low.map((a) => `
-        <li class="spread"><span>${esc(a.title)} <span class="muted small">· ${esc(a.evidence[0])}</span></span>
-        <a href="#/risk/${a.id}" class="small">Details</a></li>`).join("")}</ul></div>` : ""}
-    ` : ""}
-    ${d.hints.length ? `<h2>Improve your alerts <span class="muted small">(optional)</span></h2>
+    ${ok ? `<h2>Weather ahead</h2>${elevated.length ? elevated.map(riskCard).join("")
+      : `<div class="notice info">✅ No storms, frost, heat, flooding or drought risk in the next 7 days.</div>`}` : ""}`;
+  const below = [
+    d.crops.length ? `<h2>Your crops</h2><div class="crop-grid">${d.crops.map(cropWidget).join("")}</div>`
+      : `<h2>Your crops</h2><div class="card"><p>Add your crops to get a page for each one with tailored watering, sunlight and pest advice.</p>
+         <a class="btn secondary" href="#/setup/2">Add crops</a></div>`,
+    ok && actions.length ? `<h2>Top actions</h2><div class="card"><ul class="actions-list">${actions.map((r) => `
+      <li><span class="urg ${r.urgency}">${URGENCY[r.urgency]}</span> · <span class="muted small">${esc(r.hazard)}</span><br>
+      <a href="#/risk/${r.aid}" style="color:inherit;text-decoration:none">${esc(r.action)}</a></li>`).join("")}</ul></div>` : "",
+    ok && low.length ? `<h2>Checked: no elevated risk</h2><div class="card"><ul class="actions-list">${low.map((a) => `
+      <li class="spread"><span>${esc(a.title)} <span class="muted small">· ${esc(a.evidence[0])}</span></span>
+      <a href="#/risk/${a.id}" class="small">Details</a></li>`).join("")}</ul></div>` : "",
+    d.hints.length ? `<h2>Improve your advice <span class="small">(optional)</span></h2>
       <div class="card"><ul class="plain">${d.hints.map((h) => `<li>${esc(h)}</li>`).join("")}</ul>
-      <a href="#/profile">Update farm profile</a></div>` : ""}
-    <p class="muted small" style="margin-top:24px">These are weather-based risk warnings, not confirmation of damage or disease.
-      Thresholds are pilot placeholders pending agronomist review. Always follow local expert, regulatory and veterinary advice.</p>`);
+      <a href="#/profile">Update farm profile</a></div>` : "",
+    `<p class="small soil-note">These are weather-based warnings and general guidance, not confirmation of damage or disease.
+      Thresholds and crop values are pending agronomist review. Always follow local expert, regulatory and veterinary advice.</p>`,
+  ];
+  render(plant(above, below));
   document.getElementById("refresh").onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = "Refreshing…";
     try { await dashboard(null, true); } catch (err) { showError(err); }
+  };
+}
+
+// ------------------------------------------------------------------ crop landing page
+async function cropPage(itemId) {
+  setTabs("dashboard");
+  if (!(await requireAccount())) return;
+  const farm = await currentFarm();
+  if (!farm) { location.hash = "#/"; return; }
+  render(`<div class="spinner">Loading crop advice…</div>`);
+  const d = await api(`/api/farms/${farm.id}/crops/${itemId}`);
+  const a = d.advice, g = a.guide, st = a.stage, item = a.item;
+  const ok = d.weather.status !== "unavailable";
+  const today = new Date().toISOString().slice(0, 10);
+  const w = a.water || {};
+  const waterBig = !ok ? "—" : w.status === "water" || w.status === "no_past_rain" ? `${w.add_l_per_m2} L/m²`
+    : w.status === "unavailable" ? "—" : "0 L/m²";
+  const above = `
+    <p><a href="#/dashboard">← Dashboard</a></p>
+    <div class="crop-hero">
+      <span class="crop-emoji" aria-hidden="true">${g.emoji}</span>
+      <div><h1 style="margin:0">${esc(item.name)}</h1>
+        <p class="muted small" style="margin:0">${a.in_guide ? `Matched to our guide: ${esc(g.name)}` : "Not in our crop guide yet: general vegetable values used"}
+          · 📍 ${esc(d.farm.location_label)}</p></div>
+    </div>
+    <div class="card">
+      <div class="spread"><h2 style="margin:0">Growth stage</h2><span class="badge lvl-low">${esc(st.label)}</span></div>
+      ${st.perennial ? `<p class="muted small" style="margin-top:8px">Perennial crop: stage follows the season.</p>` : ""}
+      ${st.days != null && !st.perennial ? `<p style="margin:8px 0 4px">${st.future ? "Planned" : `${st.days} days since planting`}
+        ${st.progress != null ? ` · ${Math.round(st.progress * 100)}% through a typical season` : ""}</p>
+        <div class="bar" aria-hidden="true"><span style="width:${Math.round((st.progress || 0) * 100)}%"></span></div>` : ""}
+      ${st.harvest ? `<p style="margin:8px 0 0">🧺 Expected harvest: <b>${fmtDay(st.harvest.from)} – ${fmtDay(st.harvest.to)}</b></p>` : ""}
+      <form class="row" id="pdform" style="margin-top:12px">
+        <label for="pdate" style="margin:0">When did you plant this crop?</label>
+        <input type="date" id="pdate" max="${today}" value="${esc(item.planting_date || "")}" style="width:auto">
+        <button type="submit" class="secondary">Save</button>
+      </form>
+      ${st.needs_planting_date ? `<p class="small muted" style="margin:6px 0 0">Add the planting date to get stage-specific watering.</p>` : ""}
+    </div>
+    ${ok ? sunRainBlock(d.weather) : weatherBlock(d.weather)}
+    ${ok ? `<h2>Weather ahead for your ${esc(item.name.toLowerCase())}</h2>
+      ${a.weather_ahead.length ? a.weather_ahead.map((x) => `
+        <article class="card risk ${x.level}">
+          <div class="spread"><h3>${esc(x.title)}</h3>${levelBadge(x.level)}</div>
+          <p class="muted small">${fmtDay(x.window[0])} – ${fmtDay(x.window[1])}</p>
+          <p>${esc(x.evidence)}</p>
+          ${x.crop_tip ? `<p><b>For ${esc(item.name.toLowerCase())}:</b> ${esc(x.crop_tip)}</p>` : ""}
+          ${x.actions.length ? `<ul class="plain">${x.actions.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
+          ${x.assessment_id ? `<a href="#/risk/${x.assessment_id}" class="small">Full alert →</a>` : ""}
+        </article>`).join("") : `<div class="notice info">✅ No storms, frost, heat, flooding or drought risk in the next 7 days.</div>`}` : ""}`;
+  const below = [
+    ok ? `<h2>Water</h2>
+      <div class="card">
+        <div class="big-number"><span>${waterBig}</span><small>to add this week</small></div>
+        <p>${esc(w.summary || "")}</p>
+        ${w.crop_use_mm != null ? `<ul class="plain small muted">
+          <li>Crop water use (last 7 days): ≈${w.crop_use_mm} mm (reference evaporation × crop factor ${w.kc}${w.estimated ? ", estimated" : ""})</li>
+          <li>Rain: ${w.rain_mm != null ? `${w.rain_mm} mm, ${esc(w.rain_source)}` : "not available"}</li>
+          <li>Forecast rain: ${w.forecast_rain_3d_mm} mm in 3 days, ${w.forecast_rain_7d_mm} mm in 7 days</li>
+          <li>1 mm of water = 1 litre per square metre. Check soil at finger depth before watering.</li></ul>` : ""}
+      </div>` : "",
+    ok ? `<h2>Sunlight and temperature</h2>
+      <div class="card"><p>☀️ ${esc(a.sun.summary)}${a.sun.estimated ? ` <span class="muted small">(estimated from cloud cover)</span>` : ""}</p>
+        <p style="margin:0">🌡️ ${esc(a.temperature.summary)}</p></div>` : "",
+    `<h2>Growing guide</h2>
+      <div class="card">
+        <dl class="review">
+          <dt>Sunlight</dt><dd>~${g.sun_hours} h a day</dd>
+          <dt>Temperature</dt><dd>${g.temp_c.min}–${g.temp_c.max} °C</dd>
+          <dt>Soil pH</dt><dd>${esc(g.ph)}</dd>
+          ${g.harvest_days ? `<dt>Time to harvest</dt><dd>${g.harvest_days[0]}–${g.harvest_days[1]} days</dd>` : ""}
+          <dt>Water use</dt><dd>Crop factor ${g.kc.ini} → ${g.kc.mid} → ${g.kc.end} (FAO-56)</dd>
+        </dl>
+        <p style="margin:12px 0 0">${esc(g.notes)}</p>
+      </div>`,
+    `<h2>Pests and bio-friendly protection</h2>
+      ${g.pests.map((p) => `<div class="card"><h3>${esc(p.name)}</h3><p class="muted small">${esc(p.signs)}</p>
+        <ul class="plain">${p.controls.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>`).join("")}`,
+    `<h2>For a better yield</h2>
+      <div class="card"><ul class="plain">${g.feeds.map((x) => `<li><b>${esc(x.name)}</b>: ${esc(x.use)}</li>`).join("")}</ul>
+      <p class="small muted" style="margin:0">⚠️ ${esc(d.caveat)}</p></div>`,
+    `<h2>Sources</h2>
+      <div class="card"><ul class="plain small">${g.sources.map((x) => `<li>${x.url
+        ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</li>`).join("")}</ul>
+      <p class="small muted" style="margin:0">Crop values compiled from published guidance; pending agronomist review.</p></div>`,
+  ];
+  render(plant(above, below));
+  document.getElementById("pdform").onsubmit = async (e) => {
+    e.preventDefault();
+    const v = document.getElementById("pdate").value;
+    await api(`/api/farms/${farm.id}/items/${item.id}`, { method: "PUT", body: { planting_date: v || null } });
+    cropPage(itemId);
   };
 }
 

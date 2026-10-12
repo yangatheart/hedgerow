@@ -9,7 +9,7 @@ by an agronomist for the chosen pilot region before real-world use.
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 
-MODEL_VERSION = "rules-2026.10-v1"
+MODEL_VERSION = "rules-2026.10-v2"
 
 THRESHOLDS = {
     "rain_3day_high_mm": 50, "rain_3day_medium_mm": 25,
@@ -18,7 +18,9 @@ THRESHOLDS = {
     "crop_heat_high_c": 35, "crop_heat_medium_c": 30,
     "thi_high": 79, "thi_medium": 72,                  # livestock temperature-humidity index
     "frost_high_c": -2, "frost_medium_c": 0, "frost_low_c": 2,
+    "gust_high_kmh": 75, "gust_medium_kmh": 50,         # strong-wind thresholds (Met Office-style "gale" ~ 75 km/h)
 }
+THUNDER_CODES = {95, 96, 99}
 
 LEVELS = ["low", "medium", "high"]
 LEVEL_LIKELIHOOD = {"low": 1, "medium": 2, "high": 3}
@@ -27,7 +29,7 @@ FORAGE_TYPES = {"grass_pasture", "hay_forage"}
 BLIGHT_CROPS = {"potato", "potatoes", "tomato", "tomatoes"}
 # Hazards each main concern cares about most (used only for ordering ties).
 CONCERN_HAZARDS = {
-    "weather": {"heavy_rain", "frost", "crop_heat", "livestock_heat", "drought"},
+    "weather": {"heavy_rain", "frost", "crop_heat", "livestock_heat", "drought", "storm"},
     "pests_diseases": {"late_blight"},
     "soil_water": {"heavy_rain", "drought"},
     "livestock_health": {"livestock_heat"},
@@ -354,6 +356,50 @@ def rule_late_blight(farm, cond, data, today):
                       missing, recs, impact=3)
 
 
+def rule_storm(farm, cond, data, today):
+    """Thunderstorms or strong gusts in the next 7 days."""
+    d, idx, _ = _future_daily(data, today)
+    nxt = idx[:7]
+    if not nxt:
+        return None
+    codes = d.get("weather_code") or [None] * len(d["time"])
+    gusts = d.get("wind_gusts_10m_max") or [None] * len(d["time"])
+    thunder_days = [d["time"][i] for i in nxt if codes[i] in THUNDER_CODES]
+    gust_vals = [(_num(gusts[i]), d["time"][i]) for i in nxt if gusts[i] is not None]
+    peak_gust, gust_day = max(gust_vals) if gust_vals else (0.0, None)
+    t = THRESHOLDS
+    estimated = "wind_gusts_10m_max" in (data.get("estimated") or [])
+    if peak_gust >= t["gust_high_kmh"] or (thunder_days and peak_gust >= t["gust_medium_kmh"]):
+        level = "high"
+    elif thunder_days or peak_gust >= t["gust_medium_kmh"]:
+        level = "medium"
+    else:
+        level = "low"
+    evidence = []
+    if thunder_days:
+        evidence.append(f"Thunderstorms forecast on {', '.join(thunder_days)}.")
+    evidence.append(f"Strongest forecast gust next 7 days: {peak_gust:.0f} km/h" + (f" on {gust_day}" if gust_day else "")
+                    + (" (estimated from mean wind)." if estimated else "."))
+    evidence.append(f"Rule: medium = thunderstorm or gusts ≥ {t['gust_medium_kmh']} km/h; "
+                    f"high = gusts ≥ {t['gust_high_kmh']} km/h, or thunder with gusts ≥ {t['gust_medium_kmh']} km/h.")
+    if level == "high":
+        recs = [Rec("Stake or tie in tall crops and young trees, and secure fleece, netting and polytunnel covers.",
+                    "Strong gusts tear covers and snap or flatten plants.", "now"),
+                Rec("Pick anything ripe or nearly ripe before the storm.", "Wind and hail damage ripe produce first.", "soon"),
+                Rec("Clear drains and move livestock and loose equipment to shelter.",
+                    "Thunderstorms bring sudden heavy rain and flying debris.", "soon", "Whole farm")]
+    elif level == "medium":
+        recs = [Rec("Check stakes, supports and crop covers are secure.", "Storms or gusty winds are forecast.", "soon"),
+                Rec("Plan spraying and field work for calmer days.", "Wind causes drift and uneven work.", "monitor")]
+    else:
+        recs = [Rec("No storm action needed this week.", "No thunderstorms or strong gusts forecast.", "info")]
+    return Assessment("storm", "Storms and strong wind", level, "Whole farm", d["time"][nxt[0]], d["time"][nxt[-1]],
+                      evidence, ["Thunderstorms are hard to forecast precisely more than 1-2 days ahead.",
+                                 "Exposed and hilltop fields feel stronger gusts than the forecast point."]
+                      + (["Gusts are estimated from mean wind speed by the fallback weather source."] if estimated else []),
+                      [], recs, impact=3 if level == "high" else 2)
+
+
 def _plants_label(farm):
     names = [p["name"] for p in farm.get("production_items", []) if p["type"] != "livestock"]
     return ", ".join(names) if names else "Crops and plants"
@@ -380,6 +426,7 @@ def applicable_rules(farm) -> list:
         rules.append(rule_livestock_heat)
     if not rules:  # "other" only: still give general weather hazards
         rules = [rule_heavy_rain, rule_frost]
+    rules.append(rule_storm)
     return rules
 
 

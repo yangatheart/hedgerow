@@ -1,20 +1,28 @@
-"""Weather ingestion (Open-Meteo: free, no API key). Isolated from risk logic and UI.
+"""Weather ingestion. Isolated from risk logic and UI.
+
+Open-Meteo first (free, no key); MET Norway as a free fallback when Open-Meteo is unavailable
+(it rate-limits shared cloud IPs). Both are stored in the same Open-Meteo-shaped format.
 
 Every snapshot is stored with source + fetch time so freshness can be shown (FR-04).
 """
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
+
+from . import sources
 
 SOURCE = "open-meteo.com"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 STALE_AFTER = timedelta(hours=6)  # older snapshots are shown as stale
 REFRESH_AFTER = timedelta(hours=1)  # don't refetch more often than this
-HEADERS = {"User-Agent": "HedgeRow/0.1 (farm risk MVP)"}
+HEADERS = {"User-Agent": sources.USER_AGENT}
+PROVIDER = os.environ.get("WEATHER_PROVIDER", "auto")  # auto | openmeteo | met
+_rain_cache: dict[tuple, tuple[datetime, dict | None]] = {}
 log = logging.getLogger("uvicorn.error")
 
 
@@ -41,6 +49,8 @@ def iso(dt: datetime) -> str:
 
 
 def geocode(query: str, count: int = 6) -> list[dict]:
+    if sources.is_uk_postcode(query):
+        return sources.postcode_lookup(query)
     r = _get(GEOCODE_URL, {"name": query, "count": count, "language": "en"}, timeout=10)
     out = []
     for g in r.json().get("results", []) or []:
@@ -54,7 +64,20 @@ def geocode(query: str, count: int = 6) -> list[dict]:
     return out
 
 
-def fetch_forecast(lat: float, lon: float) -> dict:
+def fetch_forecast(lat: float, lon: float, tz_name: str | None = None) -> dict:
+    """Forecast in the internal (Open-Meteo-shaped) format, from the first provider that works."""
+    if PROVIDER == "met":
+        return sources.met_norway_forecast(lat, lon, tz_name)
+    try:
+        return fetch_open_meteo(lat, lon)
+    except Exception as e:
+        if PROVIDER == "openmeteo":
+            raise
+        log.warning("Open-Meteo failed (%r); falling back to MET Norway", e)
+        return sources.met_norway_forecast(lat, lon, tz_name)
+
+
+def fetch_open_meteo(lat: float, lon: float) -> dict:
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -66,11 +89,28 @@ def fetch_forecast(lat: float, lon: float) -> dict:
         "daily": ",".join([
             "temperature_2m_max", "temperature_2m_min", "precipitation_sum",
             "precipitation_probability_max", "et0_fao_evapotranspiration",
-            "relative_humidity_2m_mean", "weather_code",
+            "relative_humidity_2m_mean", "weather_code", "sunshine_duration", "wind_gusts_10m_max",
         ]),
     }
-    r = _get(FORECAST_URL, params, timeout=15)
-    return r.json()
+    data = _get(FORECAST_URL, params, timeout=15).json()
+    data["provider"] = SOURCE
+    data["estimated"] = []
+    return data
+
+
+def measured_rain(lat: float, lon: float) -> dict | None:
+    """Past-7-day measured rain from the nearest EA gauge (England), cached for an hour."""
+    key = (round(lat, 3), round(lon, 3))
+    hit = _rain_cache.get(key)
+    if hit and utcnow() - hit[0] < REFRESH_AFTER:
+        return hit[1]
+    try:
+        value = sources.measured_rain_7d(lat, lon)
+    except Exception as e:
+        log.warning("Rain gauge lookup failed: %r", e)
+        value = None
+    _rain_cache[key] = (utcnow(), value)
+    return value
 
 
 def latest_snapshot(conn, farm_id: int):
@@ -96,14 +136,15 @@ def get_weather(conn, farm, force: bool = False) -> dict:
     needs_fetch = force or not same_place or now - datetime.fromisoformat(snap["fetched_at"]) > REFRESH_AFTER
     if needs_fetch:
         try:
-            data = fetch_forecast(farm["latitude"], farm["longitude"])
+            data = fetch_forecast(farm["latitude"], farm["longitude"], farm.get("timezone"))
+            source = data.get("provider", SOURCE)
             cur = conn.execute(
                 "INSERT INTO weather_snapshots(farm_id, source, latitude, longitude, fetched_at, payload) VALUES (?,?,?,?,?,?)",
-                (farm["id"], SOURCE, farm["latitude"], farm["longitude"], iso(now), json.dumps(data)),
+                (farm["id"], source, farm["latitude"], farm["longitude"], iso(now), json.dumps(data)),
             )
             conn.commit()
             return {"status": "fresh", "snapshot_id": cur.lastrowid, "fetched_at": iso(now),
-                    "data": data, "error": None, "source": SOURCE}
+                    "data": data, "error": None, "source": source}
         except Exception as e:  # network/API failure: fall back safely
             code = getattr(getattr(e, "response", None), "status_code", None)
             error = f"Weather service unavailable ({code or type(e).__name__})"
@@ -129,23 +170,32 @@ WEATHER_CODES = {
 }
 
 
+def _col(d: dict, key: str, i: int):
+    vals = d.get(key) or []
+    return vals[i] if i < len(vals) else None
+
+
 def summarize(data: dict) -> dict:
-    """Compact weather summary for the dashboard."""
+    """Compact weather summary for the dashboard: now, the next 7 days, and the past 7 days."""
     cur = data.get("current", {}) or {}
     d = data.get("daily", {}) or {}
     today = cur.get("time", "")[:10]
-    days = []
+    days, past = [], []
     for i, day in enumerate(d.get("time", [])):
-        if day < today:
-            continue
-        days.append({
+        sun = _col(d, "sunshine_duration", i)
+        row = {
             "date": day,
             "t_max": d["temperature_2m_max"][i],
             "t_min": d["temperature_2m_min"][i],
             "rain_mm": d["precipitation_sum"][i],
-            "rain_prob": (d.get("precipitation_probability_max") or [None] * (i + 1))[i],
-            "condition": WEATHER_CODES.get(d.get("weather_code", [None] * (i + 1))[i], ""),
-        })
+            "rain_prob": _col(d, "precipitation_probability_max", i),
+            "sun_h": round(sun / 3600, 1) if sun is not None else None,
+            "gust_kmh": _col(d, "wind_gusts_10m_max", i),
+            "et0_mm": _col(d, "et0_fao_evapotranspiration", i),
+            "condition": WEATHER_CODES.get(_col(d, "weather_code", i), ""),
+        }
+        (past if day < today else days).append(row)
+    past = past[-7:]
     return {
         "current": {
             "temperature": cur.get("temperature_2m"),
@@ -155,6 +205,11 @@ def summarize(data: dict) -> dict:
             "condition": WEATHER_CODES.get(cur.get("weather_code"), ""),
             "time": cur.get("time"),
         },
-        "days": days,
+        "days": days[:7],
+        "past_days": past,
+        "past_rain_mm": round(sum(p["rain_mm"] or 0 for p in past), 1) if past else None,
+        "past_sun_h": round(sum(p["sun_h"] or 0 for p in past), 1) if past and all(p["sun_h"] is not None for p in past) else None,
+        "provider": data.get("provider", SOURCE),
+        "estimated": data.get("estimated", []),
         "timezone": data.get("timezone"),
     }

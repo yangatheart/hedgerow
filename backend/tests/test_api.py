@@ -12,9 +12,14 @@ from app import main, weather
 from tests.test_risk_engine import make_weather
 
 
+@pytest.fixture(autouse=True)
+def no_rain_gauge(monkeypatch):
+    monkeypatch.setattr(weather, "measured_rain", lambda lat, lon: {"mm": 0.3, "station": "Test gauge", "distance_km": 2.0})
+
+
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(weather, "fetch_forecast", lambda lat, lon: make_weather(rain=[25, 20, 10, 0, 0, 0, 0]))
+    monkeypatch.setattr(weather, "fetch_forecast", lambda lat, lon, tz=None: make_weather(rain=[25, 20, 10, 0, 0, 0, 0]))
     with TestClient(main.app) as c:
         token = c.post("/api/session").json()["token"]
         c.headers["Authorization"] = f"Bearer {token}"
@@ -25,7 +30,7 @@ def client(monkeypatch):
 
 @pytest.fixture()
 def anon(monkeypatch):
-    monkeypatch.setattr(weather, "fetch_forecast", lambda lat, lon: make_weather())
+    monkeypatch.setattr(weather, "fetch_forecast", lambda lat, lon, tz=None: make_weather())
     with TestClient(main.app) as c:
         c.headers["Authorization"] = f"Bearer {c.post('/api/session').json()['token']}"
         yield c
@@ -43,7 +48,7 @@ def test_full_flow(client):
     d = client.get(f"/api/farms/{fid}/dashboard").json()
     assert d["weather"]["status"] == "fresh"
     rain = next(a for a in d["assessments"] if a["hazard"] == "heavy_rain")
-    assert rain["level"] == "high" and rain["model_version"] == "rules-2026.10-v1"
+    assert rain["level"] == "high" and rain["model_version"] == "rules-2026.10-v2"
 
     # cached: second call reuses the same run
     d2 = client.get(f"/api/farms/{fid}/dashboard").json()
@@ -75,7 +80,7 @@ def test_other_users_cannot_see_farm(client):
 
 
 def test_weather_outage_is_handled(client, monkeypatch):
-    def boom(lat, lon):
+    def boom(lat, lon, tz=None):
         raise ConnectionError("down")
     monkeypatch.setattr(weather, "fetch_forecast", boom)
     fid = client.post("/api/farms", json={"latitude": 10, "longitude": 10, "production_types": ["fruit"]}).json()["id"]

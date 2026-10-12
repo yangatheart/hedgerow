@@ -134,3 +134,98 @@ dl.review dd { margin: 0; }
 }
 .hero-img .eyebrow { display: block; font-size: 1.9rem; font-weight: 800; letter-spacing: -.01em; line-height: 1.1; }
 @media (min-width: 792px) { .hero-img { margin: 0; border-radius: var(--radius); } }
+
+/* ---------------------------------------------------------------- carrot page layout
+   Leafy top in the sky (weather), soil line, then a tapering carrot root runs down the left
+   through the below-ground sections and ends in a root tip. */
+:root {
+  --sky-1: #dcefff; --sky-2: #f3f8ec;
+  --soil-1: #8a5a36; --soil-2: #5e3b22; --soil-3: #3f2716; --soil-ink: #fbefe2;
+  --carrot-1: #f39a3d; --carrot-2: #e2701d; --carrot-3: #c95a12;
+  --leaf-1: #3f8f3a; --leaf-2: #2f6f2b; --grass: #5f9f3f;
+  --col: 56px;   /* width of the plant column on the left */
+  --root: 30px;  /* root width at the soil line */
+}
+@media (prefers-color-scheme: dark) {
+  :root { --sky-1: #16263a; --sky-2: #1a221a; --soil-1: #4a301c; --soil-2: #33210f; --soil-3: #1f1409;
+    --leaf-1: #5fae58; --leaf-2: #4a9445; --grass: #4b8a33; }
+}
+.plant { margin: 0 -16px; }
+.above {
+  position: relative; padding: 16px 16px 24px calc(var(--col) + 8px);
+  background: linear-gradient(var(--sky-1), var(--sky-2));
+}
+.above .leaves { position: absolute; left: calc(var(--col) / 2 - 22px); bottom: -4px; width: 44px; height: 132px; }
+.above .leaves svg { width: 100%; height: 100%; display: block; }
+.soil-line {
+  height: 16px; position: relative;
+  background:
+    radial-gradient(circle at 8px 0, var(--grass) 5px, transparent 6px) 0 0 / 16px 8px repeat-x,
+    linear-gradient(var(--soil-1), var(--soil-1));
+}
+.soil-line::after { /* carrot shoulder poking out of the soil */
+  content: ""; position: absolute; left: calc(var(--col) / 2 - var(--root) / 2 - 3px); top: -6px;
+  width: calc(var(--root) + 6px); height: 22px; border-radius: 50% 50% 0 0;
+  background: linear-gradient(90deg, var(--carrot-2), var(--carrot-1) 45%, var(--carrot-2));
+}
+.below {
+  position: relative; padding: 8px 16px 72px calc(var(--col) + 8px); color: var(--soil-ink);
+  background: linear-gradient(var(--soil-1), var(--soil-2) 45%, var(--soil-3));
+}
+.below::before { /* the root: tapers from full width to a point */
+  content: ""; position: absolute; top: 0; bottom: 44px; left: calc(var(--col) / 2 - var(--root) / 2); width: var(--root);
+  background:
+    repeating-linear-gradient(176deg, transparent 0 34px, rgba(120, 50, 0, .28) 34px 36px),
+    linear-gradient(90deg, var(--carrot-3), var(--carrot-1) 40%, var(--carrot-2));
+  clip-path: polygon(0 0, 100% 0, 60% 100%, 40% 100%);
+}
+.root-tip { position: absolute; left: calc(var(--col) / 2 - 1px); bottom: 12px; width: 2px; height: 34px;
+  background: linear-gradient(var(--carrot-3), transparent); border-radius: 1px; }
+.rootsec { position: relative; }
+.rootsec::before { /* a root hair joining each section to the carrot */
+  content: ""; position: absolute; left: calc(-1 * (var(--col) / 2) - 6px); top: 34px; width: calc(var(--col) / 2); height: 2px;
+  background: linear-gradient(90deg, rgba(240, 200, 160, .7), rgba(240, 200, 160, .15)); border-radius: 1px;
+}
+.below h2, .below h2 .small { color: var(--soil-ink); }
+.below .card { color: var(--text); }
+.soil-note { color: var(--soil-ink); opacity: .85; margin-top: 20px; }
+
+/* sun & rain */
+.sr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 20px; }
+.sr-k { display: block; font-size: .85rem; color: var(--muted); }
+
+/* crop widgets */
+.crop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin: 12px 0; }
+.crop-widget {
+  display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: var(--radius); text-decoration: none;
+  background: var(--surface); color: var(--text); border: 1px solid var(--line); box-shadow: var(--shadow);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.crop-widget:hover, .crop-widget:focus-visible { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.15); }
+.cw-emoji { font-size: 2rem; line-height: 1; }
+.cw-name { font-weight: 700; font-size: 1.05rem; }
+.cw-stage { color: var(--muted); font-size: .88rem; }
+.cw-water { font-size: .92rem; }
+.cw-alert { font-size: .85rem; color: var(--medium); font-weight: 600; }
+.cw-note { font-size: .78rem; color: var(--muted); }
+
+/* crop page */
+.crop-hero { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+.crop-emoji { font-size: 2.6rem; line-height: 1; }
+.big-number { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.big-number span { font-size: 2.2rem; font-weight: 800; color: var(--info); }
+.bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--carrot-1); }
+.plantlist { list-style: none; padding: 0; margin: 4px 0 0; }
+.plantlist li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.plantlist .pl-name { flex: 1; font-weight: 600; min-width: 0; }
+.plantlist input[type=date] { width: auto; flex: 0 0 auto; }
+.plantlist .pl-rm { min-height: 36px; padding: 4px 10px; }
+input[type=date] { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); color: var(--text); min-height: 44px; }
+
+@media (max-width: 520px) {
+  :root { --col: 34px; --root: 18px; }
+  .above, .below { padding-right: 12px; }
+  .above .leaves { width: 30px; height: 96px; left: calc(var(--col) / 2 - 15px); }
+}

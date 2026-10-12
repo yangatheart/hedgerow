@@ -7,7 +7,7 @@ A working MVP of the PRD (`Smart_Agriculture_System_MVP.docx`, v1.0, 12 Oct 2026
 
 ```bash
 ./run.sh            # creates .venv on first run, serves http://localhost:8000
-cd backend && ../.venv/bin/python -m pytest -q   # 18 scenario, API and account tests
+cd backend && ../.venv/bin/python -m pytest -q   # 41 tests: risk rules, API, accounts, data sources, crop advice
 ```
 
 Locally it uses SQLite (`backend/agri.db`). Set `DATABASE_URL=postgresql://...` to use PostgreSQL. The tests pass on both.
@@ -37,7 +37,16 @@ Upgrade the database (about $7/mo) before real farmers use it.
 | History, profile editing, delete farm / delete all data | History and Profile tabs |
 
 **Hazards:** heavy rainfall/waterlogging, drought/water deficit (ET₀ vs rain), crop heat, frost,
-livestock heat (THI), and late-blight weather for potato/tomato only (Hutton criteria).
+livestock heat (THI), storms and strong wind, and late-blight weather for potato/tomato only (Hutton criteria).
+
+## Crop pages and tailored advice (v2)
+
+- **Carrot design:** pages are drawn as one carrot. The leafy top sits in the sky with the weather, then the root runs down through crops, advice and actions (CSS only).
+- **Planting date:** asked per crop in setup step 2, and editable on each crop page. It sets the growth stage and harvest window.
+- **Sun and rain for the postcode:** the UK postcode is looked up exactly with postcodes.io. Past-7-day rain is **measured** at the nearest Environment Agency rain gauge (England). Elsewhere it falls back to the weather model.
+- **Crop guide** (`backend/app/crops.py`): 15 UK crops with FAO-56 crop coefficients and stage lengths, sunlight, temperature, pH, harvest time, pests with bio-friendly controls, feeds and cited sources. Unknown crops get general values.
+- **Tailored advice** (`backend/app/advice.py`): water to add = ET₀ × Kc − rain, in L/m², and it waits if rain is due. Also sunlight vs the crop's need, the temperature range, and crop-specific measures for upcoming storms, frost, heat and heavy rain.
+- **Weather sources** (`backend/app/sources.py`): Open-Meteo first, with **MET Norway** as the free automatic fallback (Render's shared IP gets 429s from Open-Meteo). With MET, sunshine (from cloud cover), ET₀ (Hargreaves) and gusts are estimated and labelled as such. Set `WEATHER_PROVIDER=met` to force it.
 
 ## Stack (MVP simplifications vs PRD §9)
 
