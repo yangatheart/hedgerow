@@ -33,7 +33,7 @@ body {
   padding-bottom: 72px;
 }
 a { color: var(--brand); }
-.topbar { display: flex; justify-content: space-between; align-items: center; background: var(--surface); border-bottom: 1px solid var(--line); padding: 12px 16px; position: sticky; top: 0; z-index: 5; }
+.topbar { gap: 12px; display: flex; justify-content: space-between; align-items: center; background: var(--surface); border-bottom: 1px solid var(--line); padding: 12px 16px; position: sticky; top: 0; z-index: 5; }
 .brand { font-weight: 700; text-decoration: none; color: var(--text); display: inline-flex; gap: 8px; align-items: center; }
 main { max-width: 760px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.6rem; line-height: 1.2; margin: 8px 0 12px; }
@@ -136,59 +136,40 @@ dl.review dd { margin: 0; }
 @media (min-width: 792px) { .hero-img { margin: 0; border-radius: var(--radius); } }
 
 /* ---------------------------------------------------------------- carrot page layout
-   Leafy top in the sky (weather), soil line, then a tapering carrot root runs down the left
-   through the below-ground sections and ends in a root tip. */
+   Above ground: sky, a hedgerow and vegetable rows, carrot leaves at the soil line.
+   Below ground: a watercolour-style root with gentle bends runs down the left of every section. */
 :root {
-  --sky-1: #dcefff; --sky-2: #f3f8ec;
-  --soil-1: #8a5a36; --soil-2: #5e3b22; --soil-3: #3f2716; --soil-ink: #fbefe2;
-  --carrot-1: #f39a3d; --carrot-2: #e2701d; --carrot-3: #c95a12;
-  --leaf-1: #3f8f3a; --leaf-2: #2f6f2b; --grass: #5f9f3f;
-  --col: 56px;   /* width of the plant column on the left */
-  --root: 30px;  /* root width at the soil line */
+  --sky-1: #e6f0f4; --sky-2: #f4f1e6;
+  --hedge-1: #4c6b45; --hedge-2: #34503a; --berry: #8e3b2f; --field: #c9c79a; --furrow: #9b7f5a; --rowleaf: #6f9356;
+  --soil-1: #7d5636; --soil-2: #5c3e27; --soil-3: #3d2919; --soil-ink: #f8eee2;
+  --carrot-1: #ec8a34; --carrot-2: #d9691f; --carrot-3: #b45317; --carrot-hi: #f8b067; --carrot-line: #9c4512; --hair: #e8c9a2;
+  --leaf-a: #6f9e4f; --leaf-b: #8bb664; --stem-a: #6b9a4c; --stem-b: #9cc07a;
+  --col: 64px;   /* plant column on the left */
 }
 @media (prefers-color-scheme: dark) {
-  :root { --sky-1: #16263a; --sky-2: #1a221a; --soil-1: #4a301c; --soil-2: #33210f; --soil-3: #1f1409;
-    --leaf-1: #5fae58; --leaf-2: #4a9445; --grass: #4b8a33; }
+  :root { --sky-1: #17232c; --sky-2: #1b2019; --hedge-1: #36503a; --hedge-2: #263c2a; --field: #4a4a32; --furrow: #6b573c;
+    --rowleaf: #57774a; --berry: #a0493b; --soil-1: #4a321f; --soil-2: #352314; --soil-3: #21160c; }
 }
 .plant { margin: 0 -16px; }
-.above {
-  position: relative; padding: 16px 16px 24px calc(var(--col) + 8px);
-  background: linear-gradient(var(--sky-1), var(--sky-2));
-}
-.above .leaves { position: absolute; left: calc(var(--col) / 2 - 22px); bottom: -4px; width: 44px; height: 132px; }
-.above .leaves svg { width: 100%; height: 100%; display: block; }
-.soil-line {
-  height: 16px; position: relative;
-  background:
-    radial-gradient(circle at 8px 0, var(--grass) 5px, transparent 6px) 0 0 / 16px 8px repeat-x,
-    linear-gradient(var(--soil-1), var(--soil-1));
-}
-.soil-line::after { /* carrot shoulder poking out of the soil */
-  content: ""; position: absolute; left: calc(var(--col) / 2 - var(--root) / 2 - 3px); top: -6px;
-  width: calc(var(--root) + 6px); height: 22px; border-radius: 50% 50% 0 0;
-  background: linear-gradient(90deg, var(--carrot-2), var(--carrot-1) 45%, var(--carrot-2));
-}
-.below {
-  position: relative; padding: 8px 16px 72px calc(var(--col) + 8px); color: var(--soil-ink);
-  background: linear-gradient(var(--soil-1), var(--soil-2) 45%, var(--soil-3));
-}
-.below::before { /* the root: tapers from full width to a point */
-  content: ""; position: absolute; top: 0; bottom: 44px; left: calc(var(--col) / 2 - var(--root) / 2); width: var(--root);
-  background:
-    repeating-linear-gradient(176deg, transparent 0 34px, rgba(120, 50, 0, .28) 34px 36px),
-    linear-gradient(90deg, var(--carrot-3), var(--carrot-1) 40%, var(--carrot-2));
-  clip-path: polygon(0 0, 100% 0, 60% 100%, 40% 100%);
-}
-.root-tip { position: absolute; left: calc(var(--col) / 2 - 1px); bottom: 12px; width: 2px; height: 34px;
-  background: linear-gradient(var(--carrot-3), transparent); border-radius: 1px; }
+.above { position: relative; padding: 16px 16px 120px calc(var(--col) + 4px);
+  background: linear-gradient(var(--sky-1), var(--sky-2)); overflow: hidden; }
+.above .scene { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 128px; }
+.above-content { position: relative; }
+.soil-line { position: relative; height: 10px; background: linear-gradient(var(--furrow), var(--soil-1)); }
+.soil-line .fronds { position: absolute; left: calc(var(--col) / 2 - 54px); bottom: 4px; width: 108px; height: 144px; }
+.below { position: relative; padding: 18px 16px 64px calc(var(--col) + 4px); color: var(--soil-ink);
+  background: linear-gradient(var(--soil-1), var(--soil-2) 40%, var(--soil-3)); }
+.below .root { position: absolute; top: -8px; left: calc(var(--col) / 2 - 30px); width: 60px; height: calc(100% - 16px); }
 .rootsec { position: relative; }
-.rootsec::before { /* a root hair joining each section to the carrot */
-  content: ""; position: absolute; left: calc(-1 * (var(--col) / 2) - 6px); top: 34px; width: calc(var(--col) / 2); height: 2px;
-  background: linear-gradient(90deg, rgba(240, 200, 160, .7), rgba(240, 200, 160, .15)); border-radius: 1px;
-}
 .below h2, .below h2 .small { color: var(--soil-ink); }
 .below .card { color: var(--text); }
 .soil-note { color: var(--soil-ink); opacity: .85; margin-top: 20px; }
+@media (max-width: 520px) {
+  :root { --col: 40px; }
+  .above, .below { padding-right: 12px; }
+  .below .root { width: 44px; left: calc(var(--col) / 2 - 22px); }
+  .soil-line .fronds { width: 84px; height: 112px; left: calc(var(--col) / 2 - 42px); }
+}
 
 /* sun & rain */
 .sr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 20px; }
@@ -224,8 +205,58 @@ dl.review dd { margin: 0; }
 input[type=date] { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
   background: var(--surface); color: var(--text); min-height: 44px; }
 
-@media (max-width: 520px) {
-  :root { --col: 34px; --root: 18px; }
-  .above, .below { padding-right: 12px; }
-  .above .leaves { width: 30px; height: 96px; left: calc(var(--col) / 2 - 15px); }
-}
+
+
+#acct { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- crop page visuals */
+:root { --water-1: #7cc0e8; --water-2: #2f86c2; --glass-bg: #f3f8fb; --glass-edge: #9db4c2; --good: #4f8f4a; --warn: #c98a1d; }
+@media (prefers-color-scheme: dark) { :root { --glass-bg: #1d2830; --glass-edge: #5f7686; --water-1: #4b9fd1; --water-2: #1f6596; } }
+.water-card { display: flex; gap: 20px; align-items: flex-start; }
+.glass { margin: 0; flex: 0 0 120px; text-align: center; }
+.glass svg { width: 120px; height: 170px; display: block; }
+.glass .wave { animation: slosh 3.5s ease-in-out infinite alternate; transform-origin: center; }
+@keyframes slosh { from { transform: translateX(-3px); } to { transform: translateX(3px); } }
+@media (prefers-reduced-motion: reduce) { .glass .wave { animation: none; } }
+.glass figcaption { font-weight: 700; color: var(--info); margin-top: 4px; }
+.water-text { flex: 1; min-width: 0; }
+.headline { font-size: 1.15rem; font-weight: 700; margin: 0 0 8px; line-height: 1.3; }
+.headline .sub { display: block; font-size: .92rem; font-weight: 500; color: var(--muted); margin-top: 4px; }
+details { margin-top: 8px; }
+details > summary { cursor: pointer; color: var(--brand); font-weight: 600; font-size: .92rem; }
+details > summary::marker { color: var(--muted); }
+.gauge + .gauge { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+.pill { display: inline-block; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; vertical-align: middle; margin-left: 6px; }
+.pill.good { background: var(--low-soft); color: var(--good); }
+.pill.warn { background: var(--medium-soft); color: var(--warn); }
+.meter { margin: 6px 0 4px; }
+.meter-track { position: relative; height: 12px; border-radius: 6px; background: var(--line); }
+.meter-band { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--good) 45%, transparent); border-radius: 6px; }
+.meter-dot { position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%;
+  background: #f2b632; border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.meter-span { position: absolute; top: 2px; bottom: 2px; background: var(--carrot-2); border-radius: 4px; }
+.meter-scale { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-top: 2px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.facts > div { display: flex; flex-direction: column; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.facts span { font-size: 1.3rem; line-height: 1; }
+.facts b { margin-top: 6px; }
+.facts small { color: var(--muted); }
+.pests details { border-bottom: 1px solid var(--line); padding: 8px 0; margin: 0; }
+.pests details:last-of-type { border-bottom: 0; }
+.pests summary { display: flex; flex-direction: column; gap: 2px; color: var(--text); list-style: none; }
+.pests summary::-webkit-details-marker { display: none; }
+.pests summary b::after { content: " ▾"; color: var(--muted); font-weight: 400; }
+.pests details[open] summary b::after { content: " ▴"; }
+.try-first { margin: 8px 0 4px; }
+.yield-list { list-style: none; padding: 0; margin: 0; }
+.yield-list li { display: flex; flex-direction: column; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.yield-list li:last-child { border-bottom: 0; }
+.yield-list span { color: var(--muted); font-size: .92rem; }
+.pest-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.pest-list li { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.pest-list li:last-child { border-bottom: 0; }
+.pest-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0 10px; }
+.pest-form .pf-product { grid-column: 1 / -1; }
+.pest-form label { font-size: .9rem; }
+@media (max-width: 520px) { .water-card { flex-direction: column; align-items: center; text-align: left; } }

@@ -217,6 +217,15 @@ class ConditionsIn(BaseModel):
     drainage: Optional[str] = None
     waterlogging_history: Optional[str] = None
     soil_moisture_observation: Optional[str] = None
+    pesticide_use: Optional[Literal["none", "some", "unsure"]] = None
+
+
+class PesticideIn(BaseModel):
+    product: str = Field(min_length=1, max_length=120)
+    amount: Optional[float] = Field(default=None, ge=0)
+    unit: Optional[Literal["ml", "L", "g", "kg"]] = None
+    per: Optional[str] = Field(default=None, max_length=40)
+    crop: Optional[str] = Field(default=None, max_length=80)
 
 
 class FarmIn(BaseModel):
@@ -232,6 +241,7 @@ class FarmIn(BaseModel):
     production_items: Optional[list[ProductionItemIn]] = None
     main_concern: Optional[str] = None
     conditions: Optional[ConditionsIn] = None
+    pesticides: Optional[list[PesticideIn]] = None
     onboarding_step: Optional[int] = Field(default=None, ge=1, le=5)
     status: Optional[Literal["draft", "complete"]] = None
 
@@ -251,7 +261,7 @@ class FollowUpIn(BaseModel):
 FARM_COLS = ["name", "location_label", "latitude", "longitude", "timezone", "size_category", "area_value",
              "area_unit", "main_concern", "onboarding_step", "status"]
 COND_COLS = ["water_access", "irrigation_type", "soil_type", "drainage", "waterlogging_history",
-             "soil_moisture_observation"]
+             "soil_moisture_observation", "pesticide_use"]
 
 
 # --------------------------------------------------------------------------- farm helpers
@@ -266,6 +276,8 @@ def load_farm(conn, farm_id: int, user_id: int) -> dict:
         "SELECT * FROM production_items WHERE farm_id=? ORDER BY id", (farm_id,))]
     cond = conn.execute("SELECT * FROM farm_conditions WHERE farm_id=?", (farm_id,)).fetchone()
     farm["conditions"] = {k: (cond[k] if cond else None) for k in COND_COLS}
+    farm["pesticides"] = [dict(r) for r in conn.execute(
+        "SELECT id, product, amount, unit, per, crop FROM pesticide_uses WHERE farm_id=? ORDER BY id", (farm_id,))]
     return farm
 
 
@@ -286,6 +298,11 @@ def apply_farm_update(conn, farm_id: int, body: FarmIn):
                  p.get("planting_date"), p.get("growth_stage")))
     if "conditions" in data and data["conditions"] is not None:
         upsert_conditions(conn, farm_id, data["conditions"])
+    if "pesticides" in data:
+        conn.execute("DELETE FROM pesticide_uses WHERE farm_id=?", (farm_id,))
+        for p in data["pesticides"] or []:
+            conn.execute("INSERT INTO pesticide_uses(farm_id, product, amount, unit, per, crop) VALUES (?,?,?,?,?,?)",
+                         (farm_id, p["product"].strip(), p.get("amount"), p.get("unit"), p.get("per"), p.get("crop")))
 
 
 def upsert_conditions(conn, farm_id: int, values: dict):
@@ -486,8 +503,10 @@ def crop_page(farm_id: int, item_id: int, user_id: int = Depends(registered_user
         item = next((i for i in _crop_items(st["farm"]) if i["id"] == item_id), None)
         if not item:
             raise HTTPException(404, "Crop not found")
+        mine = [p for p in st["farm"]["pesticides"] if not p["crop"] or p["crop"].lower() == item["name"].lower()]
         return {"farm": {k: st["farm"][k] for k in ("id", "name", "location_label")},
                 "weather": _weather_out(st), "advice": _crop_advice(st, item),
+                "pesticides": mine, "pesticide_use": st["farm"]["conditions"]["pesticide_use"],
                 "caveat": crops.UK_CAVEAT, "model_version": risk_engine.MODEL_VERSION}
 
 

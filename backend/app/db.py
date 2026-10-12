@@ -62,7 +62,17 @@ CREATE TABLE IF NOT EXISTS farm_conditions (
     soil_type TEXT,
     drainage TEXT,
     waterlogging_history TEXT,
-    soil_moisture_observation TEXT
+    soil_moisture_observation TEXT,
+    pesticide_use TEXT
+);
+CREATE TABLE IF NOT EXISTS pesticide_uses (
+    id {pk},
+    farm_id INTEGER NOT NULL REFERENCES farms(id) ON DELETE CASCADE,
+    product TEXT NOT NULL,
+    amount DOUBLE PRECISION,
+    unit TEXT,
+    per TEXT,
+    crop TEXT
 );
 CREATE TABLE IF NOT EXISTS weather_snapshots (
     id {pk},
@@ -117,6 +127,7 @@ CREATE INDEX IF NOT EXISTS ix_assess_farm ON risk_assessments(farm_id, assessed_
 CREATE INDEX IF NOT EXISTS ix_weather_farm ON weather_snapshots(farm_id, fetched_at);
 CREATE INDEX IF NOT EXISTS ix_recs_assessment ON recommendations(assessment_id);
 CREATE INDEX IF NOT EXISTS ix_feedback_rec ON feedback(recommendation_id);
+CREATE INDEX IF NOT EXISTS ix_pesticides_farm ON pesticide_uses(farm_id);
 """
 
 # Tables whose primary key is not `id` (no RETURNING id on insert).
@@ -185,6 +196,7 @@ def init_db() -> None:
             for stmt in SCHEMA.format(pk="SERIAL PRIMARY KEY").split(";"):
                 if stmt.strip():
                     conn.execute(stmt)
+            conn.execute("ALTER TABLE farm_conditions ADD COLUMN IF NOT EXISTS pesticide_use TEXT")
             conn.commit()
         finally:
             conn.close()
@@ -199,6 +211,8 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA.format(pk="INTEGER PRIMARY KEY AUTOINCREMENT"))
+        if "pesticide_use" not in {r[1] for r in conn.execute("PRAGMA table_info(farm_conditions)")}:
+            conn.execute("ALTER TABLE farm_conditions ADD COLUMN pesticide_use TEXT")
         conn.commit()
     finally:
         conn.close()

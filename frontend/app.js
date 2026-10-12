@@ -20,6 +20,11 @@ const CONCERNS = [
   ["weather", "Weather risks"], ["pests_diseases", "Pests / diseases"], ["soil_water", "Soil / water"],
   ["yield_costs", "Yield / costs"], ["livestock_health", "Livestock health"], ["general", "General advice"],
 ];
+const PEST_USE = [["none", "I don't use any"], ["some", "Yes, I use some"], ["unsure", "Not sure"]];
+const PEST_PER = ["per application", "per week", "per month", "per season", "per year"];
+const PEST_SUGGESTIONS = ["Slug pellets (ferric phosphate)", "Glyphosate weedkiller", "Insecticidal soap / fatty acids",
+  "Pyrethrum / pyrethrin spray", "Sulphur fungicide", "Bacillus thuringiensis (Bt)", "Nematodes (biological control)",
+  "Plant oil spray", "Fungicide (other)", "Insecticide (other)", "Herbicide / weedkiller (other)"];
 const SIZES = [["small", "Small"], ["medium", "Medium"], ["large", "Large"]];
 const URGENCY = { now: "Act now", soon: "Act soon", monitor: "Monitor", info: "For information" };
 const label = (list, v) => (list.find(([k]) => k === v) || [, v || "—"])[1];
@@ -174,7 +179,7 @@ let draft = null; // working copy of the farm during setup
 function blankDraft() {
   return { name: "", location_label: null, latitude: null, longitude: null, timezone: null, size_category: null,
     area_value: null, area_unit: "ha", production_types: [], production_items: [], main_concern: null,
-    conditions: { water_access: null } };
+    conditions: { water_access: null, pesticide_use: null }, pesticides: [] };
 }
 function farmToDraft(f) {
   return { name: f.name || "", location_label: f.location_label, latitude: f.latitude, longitude: f.longitude,
@@ -182,7 +187,8 @@ function farmToDraft(f) {
     production_types: f.production_types || [], main_concern: f.main_concern,
     production_items: (f.production_items || []).map(({ type, name, area_or_count, unit, planting_date, growth_stage }) =>
       ({ type, name, area_or_count, unit, planting_date, growth_stage })),
-    conditions: { ...f.conditions } };
+    conditions: { ...f.conditions },
+    pesticides: (f.pesticides || []).map(({ product, amount, unit, per, crop }) => ({ product, amount, unit, per, crop })) };
 }
 
 async function saveDraft(extra = {}) {
@@ -202,7 +208,7 @@ async function setup(step) {
   }
   step = Math.min(5, Math.max(1, step || 1));
   const steps = { 1: stepLocation, 2: stepProduction, 3: stepWater, 4: stepConcern, 5: stepReview };
-  const titles = { 1: "Where is your farm?", 2: "What do you grow or raise?", 3: "How do you water your farm?",
+  const titles = { 1: "Where is your farm?", 2: "What do you grow or raise?", 3: "Water and crop protection",
     4: "What is your biggest concern?", 5: "Review your farm profile" };
   render(`
     <p class="muted small">Step ${step} of 5</p>
@@ -420,9 +426,62 @@ function radioStep(body, list, current, onPick, intro) {
 
 // Step 3 — water access
 function stepWater(body) {
-  radioStep(body, WATER, draft.conditions.water_access, (v) => { draft.conditions.water_access = v; },
-    "This helps us interpret drought and rainfall risks.");
-  return () => draft.conditions.water_access ? null : "Choose an option, or press Skip.";
+  const paint = () => {
+    const use = draft.conditions.pesticide_use;
+    const crops = draft.production_items.filter((p) => p.type !== "livestock").map((p) => p.name);
+    body.innerHTML = `
+      <h3 style="margin-top:4px">How do you water your farm?</h3>
+      <p class="muted small">This helps us interpret drought and rainfall risks.</p>
+      ${WATER.map(([k, v]) => `<label class="choice"><input type="radio" name="water" value="${k}"
+        ${draft.conditions.water_access === k ? "checked" : ""}>${v}</label>`).join("")}
+      <h3 style="margin-top:24px">Which pesticides do you use, and how much?</h3>
+      <p class="muted small">Include weedkillers, slug pellets, sprays and biological controls. We use this to suggest
+        gentler alternatives on each crop page. Optional.</p>
+      <div class="chips" id="puse">${PEST_USE.map(([k, v]) =>
+        `<button type="button" class="chip" data-v="${k}" aria-pressed="${use === k}">${v}</button>`).join("")}</div>
+      ${use === "some" ? `
+        <div class="card">
+          <div class="pest-form">
+            <div class="pf-product"><label for="pp">Product</label>
+              <input type="text" id="pp" list="pestlist" placeholder="e.g. Slug pellets (ferric phosphate)"></div>
+            <div><label for="pa">Amount</label><input type="number" id="pa" min="0" step="any" placeholder="e.g. 50"></div>
+            <div><label for="pu">Unit</label><select id="pu">${["ml", "L", "g", "kg"].map((u) => `<option>${u}</option>`).join("")}</select></div>
+            <div><label for="pper">How often</label><select id="pper">${PEST_PER.map((x) => `<option>${x}</option>`).join("")}</select></div>
+            ${crops.length ? `<div><label for="pc">On</label><select id="pc"><option value="">All crops</option>
+              ${crops.map((c) => `<option>${esc(c)}</option>`).join("")}</select></div>` : ""}
+          </div>
+          <datalist id="pestlist">${PEST_SUGGESTIONS.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+          <button type="button" class="secondary" id="padd" style="margin-top:12px">Add pesticide</button>
+          ${draft.pesticides.length ? `<ul class="pest-list">${draft.pesticides.map((p, i) => `
+            <li><span><b>${esc(p.product)}</b>${p.amount != null ? ` · ${p.amount} ${esc(p.unit || "")} ${esc(p.per || "")}` : ""}
+              ${p.crop ? `<span class="muted small"> · on ${esc(p.crop)}</span>` : ""}</span>
+              <button type="button" class="ghost pl-rm" data-prm="${i}" aria-label="Remove ${esc(p.product)}">×</button></li>`).join("")}
+          </ul>` : ""}
+        </div>` : ""}`;
+    body.querySelectorAll("input[name=water]").forEach((r) => r.onchange = () => { draft.conditions.water_access = r.value; });
+    body.querySelector("#puse").onclick = (e) => {
+      const b = e.target.closest(".chip"); if (!b) return;
+      draft.conditions.pesticide_use = draft.conditions.pesticide_use === b.dataset.v ? null : b.dataset.v;
+      if (draft.conditions.pesticide_use !== "some") draft.pesticides = [];
+      paint();
+    };
+    body.querySelectorAll("[data-prm]").forEach((b) => b.onclick = () => {
+      draft.pesticides.splice(Number(b.dataset.prm), 1); paint();
+    });
+    const add = () => {
+      const product = body.querySelector("#pp").value.trim();
+      if (!product) { body.querySelector("#pp").focus(); return; }
+      const amount = parseFloat(body.querySelector("#pa").value);
+      draft.pesticides.push({ product, amount: Number.isFinite(amount) ? amount : null,
+        unit: Number.isFinite(amount) ? body.querySelector("#pu").value : null, per: body.querySelector("#pper").value,
+        crop: body.querySelector("#pc")?.value || null });
+      paint();
+    };
+    body.querySelector("#padd")?.addEventListener("click", add);
+    body.querySelector("#pp")?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+  };
+  paint();
+  return () => draft.conditions.water_access ? null : "Choose how you water your farm, or press Skip.";
 }
 
 // Step 4 — main concern
@@ -430,6 +489,13 @@ function stepConcern(body) {
   radioStep(body, CONCERNS, draft.main_concern, (v) => { draft.main_concern = v; },
     "We'll put related alerts first on your dashboard.");
   return () => draft.main_concern ? null : "Choose an option, or press Skip.";
+}
+
+function pestSummary(f) {
+  const use = (f.conditions || {}).pesticide_use;
+  if (use === "none") return "None";
+  if (use === "unsure") return "Not sure";
+  return (f.pesticides || []).map((p) => p.product + (p.amount != null ? ` (${p.amount} ${p.unit || ""} ${p.per || ""})`.replace(/\s+\)/, ")") : "")).join(", ");
 }
 
 // Step 5 — review
@@ -447,6 +513,7 @@ function stepReview(body) {
       ${row("Crops / plants", items("plants"), 2)}
       ${row("Livestock", items("livestock"), 2)}
       ${row("Water", draft.conditions.water_access && label(WATER, draft.conditions.water_access), 3)}
+      ${row("Pesticides", pestSummary(draft), 3)}
       ${row("Main concern", draft.main_concern && label(CONCERNS, draft.main_concern), 4)}
     </dl></div>
     <p class="muted small">You can change any of this later. We may ask a short follow-up question when it would improve a specific alert.</p>
@@ -475,29 +542,126 @@ function stepReview(body) {
 // ------------------------------------------------------------------ dashboard
 function levelBadge(level) { return `<span class="badge lvl-${level}">${level} risk</span>`; }
 
-// The page is drawn as one carrot: leafy top above ground (weather), then the root runs down through
-// the below-ground sections (crops, advice, actions), ending in a root tip.
-const LEAVES_SVG = `<svg viewBox="0 0 60 150" aria-hidden="true" focusable="false">
-  <g fill="none" stroke-linecap="round">
-    <path d="M30 150 C 28 110, 10 90, 6 40" stroke="var(--leaf-2)" stroke-width="4"/>
-    <path d="M30 150 C 31 100, 36 70, 30 8" stroke="var(--leaf-1)" stroke-width="4.5"/>
-    <path d="M30 150 C 34 115, 50 95, 55 50" stroke="var(--leaf-2)" stroke-width="4"/>
-  </g>
-  <g fill="var(--leaf-1)">
-    <ellipse cx="9" cy="48" rx="6" ry="11" transform="rotate(-20 9 48)"/><ellipse cx="16" cy="78" rx="5" ry="9" transform="rotate(-35 16 78)"/>
-    <ellipse cx="29" cy="16" rx="6" ry="12"/><ellipse cx="36" cy="46" rx="5" ry="10" transform="rotate(25 36 46)"/>
-    <ellipse cx="25" cy="64" rx="5" ry="9" transform="rotate(-25 25 64)"/><ellipse cx="52" cy="58" rx="6" ry="11" transform="rotate(20 52 58)"/>
-    <ellipse cx="45" cy="88" rx="5" ry="9" transform="rotate(35 45 88)"/>
-  </g></svg>`;
+// The page is drawn as one carrot: feathery leaves in front of a hedgerow and vegetable rows above ground
+// (weather), then a long watercolour-style root with gentle bends runs down through the below-ground
+// sections and fades into a fine tip. All inline SVG, no images.
+
+// Feathery carrot tops: thin stems fanning out, each with small lobed leaflets.
+function frondsSVG() {
+  const stems = [[-46, 104, "a"], [-32, 126, "b"], [-16, 142, "a"], [-4, 152, "b"], [9, 146, "a"],
+                 [22, 134, "b"], [36, 118, "a"], [50, 98, "b"]];
+  let out = "";
+  for (const [lean, h, tone] of stems) {
+    const x2 = 60 + lean, y2 = 160 - h, cx = 60 + lean * 0.2, cy = 160 - h * 0.6;
+    const at = (t) => [(1 - t) ** 2 * 60 + 2 * (1 - t) * t * cx + t * t * x2, (1 - t) ** 2 * 160 + 2 * (1 - t) * t * cy + t * t * y2];
+    out += `<path d="M60 160 Q${cx} ${cy} ${x2} ${y2}" stroke="var(--stem-${tone})" stroke-width="1.8" fill="none" stroke-linecap="round"/>`;
+    // pinnate leaflets: small lobed sprigs along the upper part of each stem
+    for (let i = 0; i < 7; i++) {
+      const t = 0.38 + i * 0.09, [x, y] = at(t), side = i % 2 ? 1 : -1, size = 8.5 - i * 0.7;
+      const ang = lean * 0.6 + side * 55;
+      out += `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${ang.toFixed(0)})" fill="var(--leaf-${i % 3 ? tone : "a"})">
+        <path d="M0 0 L${size * 1.6} 0" stroke="var(--stem-${tone})" stroke-width=".8"/>
+        <ellipse cx="${size * 0.7}" cy="${-size * 0.28}" rx="${size * 0.42}" ry="${size * 0.24}" transform="rotate(-25 ${size * 0.7} ${-size * 0.28})"/>
+        <ellipse cx="${size * 0.7}" cy="${size * 0.28}" rx="${size * 0.42}" ry="${size * 0.24}" transform="rotate(25 ${size * 0.7} ${size * 0.28})"/>
+        <ellipse cx="${size * 1.35}" cy="${-size * 0.18}" rx="${size * 0.36}" ry="${size * 0.2}" transform="rotate(-20 ${size * 1.35} ${-size * 0.18})"/>
+        <ellipse cx="${size * 1.35}" cy="${size * 0.18}" rx="${size * 0.36}" ry="${size * 0.2}" transform="rotate(20 ${size * 1.35} ${size * 0.18})"/>
+        <ellipse cx="${size * 1.85}" cy="0" rx="${size * 0.38}" ry="${size * 0.22}"/></g>`;
+    }
+    out += `<g transform="translate(${x2} ${y2}) rotate(${lean * 0.8 - 90})" fill="var(--leaf-${tone})">
+      <ellipse cx="4" cy="-2.5" rx="4" ry="2.2" transform="rotate(-25 4 -2.5)"/><ellipse cx="4" cy="2.5" rx="4" ry="2.2" transform="rotate(25 4 2.5)"/>
+      <ellipse cx="8" cy="0" rx="4" ry="2.3"/></g>`;
+  }
+  return `<svg class="fronds" viewBox="0 0 120 160" aria-hidden="true" focusable="false"><g opacity=".93">${out}</g></svg>`;
+}
+
+// Hedgerow along the back, rows of vegetables in front. Kept quiet and low.
+function sceneSVG() {
+  let hedge = "M0 70";
+  for (let x = 0; x <= 1200; x += 40) hedge += ` Q${x + 20} ${48 + ((x * 7) % 17)} ${x + 40} ${62 + ((x * 3) % 11)}`;
+  hedge += " L1200 92 L0 92 Z";
+  let hedge2 = "M0 78";
+  for (let x = 0; x <= 1200; x += 28) hedge2 += ` Q${x + 14} ${62 + ((x * 5) % 13)} ${x + 28} ${72 + ((x * 11) % 9)}`;
+  hedge2 += " L1200 92 L0 92 Z";
+  let berries = "";
+  for (let x = 37; x < 1200; x += 83) berries += `<circle cx="${x}" cy="${66 + (x % 9)}" r="1.8"/><circle cx="${x + 4}" cy="${68 + (x % 7)}" r="1.5"/>`;
+  let rows = "";
+  [[100, 9, 1], [110, 12, 1.25], [121, 15, 1.5]].forEach(([y, gap, sc], r) => {
+    rows += `<path d="M0 ${y + 3} H1200" stroke="var(--furrow)" stroke-width="${1.2 * sc}" opacity=".55"/>`;
+    for (let x = (r * 5) % gap; x < 1200; x += gap * 2.2) {
+      rows += `<g transform="translate(${x.toFixed(1)} ${y}) scale(${sc})"><ellipse cx="-2.2" cy="0" rx="2.6" ry="1.4" transform="rotate(-30)"/>
+        <ellipse cx="2.2" cy="0" rx="2.6" ry="1.4" transform="rotate(30)"/><ellipse cx="0" cy="-1.6" rx="1.4" ry="2.4"/></g>`;
+    }
+  });
+  return `<svg class="scene" viewBox="0 0 1200 128" preserveAspectRatio="xMidYMax slice" aria-hidden="true" focusable="false">
+    <rect x="0" y="86" width="1200" height="42" fill="var(--field)"/>
+    <path d="${hedge}" fill="var(--hedge-2)"/><path d="${hedge2}" fill="var(--hedge-1)"/>
+    <g fill="var(--berry)" opacity=".75">${berries}</g>
+    <g fill="var(--rowleaf)">${rows}</g></svg>`;
+}
+
+// The root: drawn in a 0..80 x 0..1000 box and stretched to the height of the section.
+function rootSVG() {
+  const N = 120, left = [], right = [];
+  const centre = (t) => 40 + Math.sin(t * Math.PI * 2.4 + 0.5) * (3 + 12 * t) + Math.sin(t * 9) * 1.4;
+  const half = (t) => {
+    const shoulder = Math.min(1, Math.sqrt(t / 0.0025));           // short rounded top (stretched later)
+    return Math.max(0.5, 22 * shoulder * Math.pow(1 - t, 0.8));
+  };
+  for (let i = 0; i <= N; i++) {
+    const t = i === 1 ? 0.0006 : i === 2 ? 0.0015 : i / N, y = t * 1000, c = centre(t), w = half(t);
+    left.push(`${(c - w).toFixed(2)} ${y.toFixed(1)}`);
+    right.push(`${(c + w * 0.94).toFixed(2)} ${y.toFixed(1)}`);
+  }
+  const body = `M${left[0]} L${left.slice(1).join(" L")} L${right.reverse().join(" L")} Z`;
+  // ridges: short curved strokes across the body, irregularly spaced
+  let ridges = "";
+  for (let y = 18; y < 920; y += 16 + ((y * 13) % 19)) {
+    const t = y / 1000, c = centre(t), w = half(t);
+    // short slanted notches, alternating sides, like the growth rings on a real root
+    const leftSide = Math.round(y / 7) % 2 === 0;
+    const from = leftSide ? c - w * 0.92 : c + w * 0.05, to = leftSide ? c - w * 0.25 : c + w * 0.85;
+    ridges += `<path d="M${from.toFixed(1)} ${y} Q${((from + to) / 2).toFixed(1)} ${y - 1.5} ${to.toFixed(1)} ${y + 2.5}"/>`;
+  }
+  // fine root hairs from the edges
+  let hairs = "";
+  for (let y = 120; y < 960; y += 70 + ((y * 11) % 50)) {
+    const t = y / 1000, c = centre(t), w = half(t), side = (y / 10) % 2 > 1 ? 1 : -1;
+    const x0 = c + side * w, len = 10 + ((y * 5) % 9);
+    hairs += `<path d="M${x0.toFixed(1)} ${y} q${side * len * 0.6} ${len * 0.5} ${side * len} ${len * 1.6}"/>`;
+  }
+  // highlight down the lit side
+  let hl = "";
+  for (let i = 1; i <= 60; i++) {
+    const t = i / 80, c = centre(t), w = half(t);
+    hl += `${i === 1 ? "M" : " L"}${(c - w * 0.42).toFixed(2)} ${(t * 1000).toFixed(1)}`;
+  }
+  return `<svg class="root" viewBox="0 0 80 1000" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="rootfill" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0" stop-color="var(--carrot-3)"/><stop offset=".3" stop-color="var(--carrot-1)"/>
+        <stop offset=".5" stop-color="var(--carrot-hi)"/><stop offset=".78" stop-color="var(--carrot-2)"/>
+        <stop offset="1" stop-color="var(--carrot-3)"/></linearGradient>
+      <linearGradient id="rootfade" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset=".86" stop-color="#fff" stop-opacity="1"/>
+        <stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+      <mask id="rootmask"><rect width="80" height="1000" fill="url(#rootfade)"/></mask>
+    </defs>
+    <g mask="url(#rootmask)">
+      <path d="${body}" fill="url(#rootfill)"/>
+      <path d="${hl}" fill="none" stroke="var(--carrot-hi)" stroke-width="2.4" opacity=".55" vector-effect="non-scaling-stroke"/>
+      <g fill="none" stroke="var(--carrot-line)" stroke-width="1" stroke-linecap="round" opacity=".38" vector-effect="non-scaling-stroke">${ridges}</g>
+      <g fill="none" stroke="var(--hair)" stroke-width=".9" stroke-linecap="round" opacity=".7" vector-effect="non-scaling-stroke">${hairs}</g>
+    </g></svg>`;
+}
 
 function plant(above, belowSections) {
   return `
     <div class="plant">
-      <div class="above"><div class="leaves">${LEAVES_SVG}</div><div class="above-content">${above}</div></div>
-      <div class="soil-line" aria-hidden="true"></div>
+      <div class="above">${sceneSVG()}<div class="above-content">${above}</div></div>
+      <div class="soil-line" aria-hidden="true">${frondsSVG()}</div>
       <div class="below">
+        ${rootSVG()}
         ${belowSections.filter(Boolean).map((sec) => `<section class="rootsec">${sec}</section>`).join("")}
-        <div class="root-tip" aria-hidden="true"></div>
       </div>
     </div>`;
 }
@@ -623,6 +787,90 @@ async function dashboard(_, refresh = false) {
   };
 }
 
+// ------------------------------------------------------------------ crop page visuals
+const GLASS_FULL_L = 25;   // a full glass = 25 L per m² (a very dry week)
+
+function waterHeadline(w) {
+  if (!w || w.status === "unavailable") return "Not enough weather data to work out watering.";
+  if (w.status === "ok") return "No watering needed this week";
+  if (w.status === "wait") return "Hold off: rain is on the way";
+  const cans = w.add_l_per_m2 / 10;
+  return `Add ${w.add_l_per_m2} L of water per m² this week
+    <span class="sub">≈ ${cans < 1 ? "under one" : cans.toFixed(cans < 3 ? 1 : 0)} 10-litre watering can${cans >= 1.05 ? "s" : ""} for every square metre${w.waterings > 1 ? `, in ${w.waterings} waterings` : ""}</span>`;
+}
+
+function glassSVG(w) {
+  const litres = w && (w.status === "water" || w.status === "no_past_rain") ? w.add_l_per_m2 : 0;
+  const f = Math.max(0, Math.min(1, litres / GLASS_FULL_L));
+  const top = 18, bottom = 150, h = (bottom - top) * f, y = bottom - h;
+  const label = w && w.status === "wait" ? "rain due" : `${litres} L/m²`;
+  return `<figure class="glass" role="img" aria-label="Water glass ${Math.round(f * 100)}% full: ${esc(label)}">
+    <svg viewBox="0 0 120 170">
+      <defs><clipPath id="glassin"><path d="M20 16 L100 16 L92 150 Q91 156 85 156 L35 156 Q29 156 28 150 Z"/></clipPath>
+        <linearGradient id="waterfill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--water-1)"/><stop offset="1" stop-color="var(--water-2)"/></linearGradient></defs>
+      <g clip-path="url(#glassin)">
+        <rect x="0" y="0" width="120" height="170" fill="var(--glass-bg)"/>
+        ${f > 0 ? `<path class="wave" d="M0 ${y.toFixed(1)} Q15 ${(y - 4).toFixed(1)} 30 ${y.toFixed(1)} T60 ${y.toFixed(1)} T90 ${y.toFixed(1)} T120 ${y.toFixed(1)} V170 H0 Z" fill="url(#waterfill)"/>` : ""}
+      </g>
+      ${[0.25, 0.5, 0.75].map((m) => `<line x1="88" x2="96" y1="${(bottom - (bottom - top) * m).toFixed(1)}" y2="${(bottom - (bottom - top) * m).toFixed(1)}" stroke="var(--glass-edge)" stroke-width="1"/>`).join("")}
+      <path d="M18 12 L102 12 L93 151 Q92 160 85 160 L35 160 Q28 160 27 151 Z" fill="none" stroke="var(--glass-edge)" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M30 24 L36 140" stroke="#fff" stroke-width="3" opacity=".45" stroke-linecap="round"/>
+    </svg>
+    <figcaption>${esc(label)}</figcaption></figure>`;
+}
+
+function meter(value, lo, hi, min, max, unitLabel) {
+  const pct = (v) => Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100));
+  return `<div class="meter"><div class="meter-track">
+      <span class="meter-band" style="left:${pct(lo)}%;width:${pct(hi) - pct(lo)}%"></span>
+      ${Array.isArray(value) ? `<span class="meter-span" style="left:${pct(value[0])}%;width:${Math.max(1.5, pct(value[1]) - pct(value[0]))}%"></span>`
+        : `<span class="meter-dot" style="left:${pct(value)}%"></span>`}
+    </div><div class="meter-scale"><span>${min}${unitLabel}</span><span>${max}${unitLabel}</span></div></div>`;
+}
+
+function sunMeter(sun, g) {
+  if (!sun || sun.status === "unavailable") return `<p>☀️ Sunshine data isn't available here.</p>`;
+  const v = sun.past_avg_h ?? sun.next_avg_h;
+  return `<div class="gauge"><p class="headline">☀️ ${v.toFixed(1)} h of sun a day <span class="pill ${sun.status === "ok" ? "good" : "warn"}">${sun.status === "ok" ? "Enough" : "A bit low"}</span></p>
+    ${meter(v, g.sun_hours * 0.75, 14, 0, 14, " h")}
+    <p class="small muted">Green = enough for ${esc(g.name.toLowerCase())} (needs ~${g.sun_hours} h)${sun.estimated ? " · estimated from cloud cover" : ""}</p>
+    <details><summary>What this means</summary><p class="small">${esc(sun.summary)}</p></details></div>`;
+}
+
+function tempMeter(t, g) {
+  if (!t || t.status === "unavailable") return "";
+  const [lo, hi] = t.forecast;
+  return `<div class="gauge"><p class="headline">🌡️ ${Math.round(lo)}–${Math.round(hi)} °C this week <span class="pill ${t.status === "ok" ? "good" : "warn"}">${t.status === "ok" ? "Just right" : "Outside ideal"}</span></p>
+    ${meter([lo, hi], g.temp_c.min, g.temp_c.max, -5, 35, "°")}
+    <p class="small muted">Green = ideal ${g.temp_c.min}–${g.temp_c.max} °C · orange bar = this week's forecast</p>
+    <details><summary>What this means</summary><p class="small">${esc(t.summary)}</p></details></div>`;
+}
+
+// Gentler alternatives for common product types (general guidance only).
+const GENTLER = [
+  [/glyphosate|herbicide|weedkiller/i, "Mulch, hoe on dry days, and use cover crops to keep weeds down without herbicide."],
+  [/ferric/i, "Already one of the lower-impact slug controls. Nematodes and beer traps can cut how much you need."],
+  [/metaldehyde|slug/i, "Nematodes (Phasmarhabditis) or ferric phosphate pellets, plus beer traps and evening hand-picking."],
+  [/pyrethr|insecticide|cypermethrin|lambda/i, "Insect mesh or fleece, encourage ladybirds and hoverflies, or fatty-acid / plant-oil sprays."],
+  [/fungicide|copper|sulphur|sulfur/i, "Resistant varieties, wider spacing for airflow, watering at the base, and removing infected leaves."],
+];
+
+function pesticideSection(d, item) {
+  const use = d.pesticide_use, list = d.pesticides || [];
+  if (use === "none") return `<h2>Your pesticides</h2><div class="card"><p>🌿 You told us you don't use pesticides. The bio-friendly options below fit that approach.</p></div>`;
+  if (!list.length) return `<h2>Your pesticides</h2><div class="card"><p class="muted">No pesticides recorded for ${esc(item.name.toLowerCase())}.</p>
+    <a href="#/setup/3">Add what you use</a></div>`;
+  return `<h2>Your pesticides</h2><div class="card"><ul class="pest-list">${list.map((p) => {
+      const alt = GENTLER.find(([re]) => re.test(p.product));
+      return `<li><span><b>${esc(p.product)}</b>${p.amount != null ? ` · ${p.amount} ${esc(p.unit || "")} ${esc(p.per || "")}` : ""}
+        ${p.crop ? "" : `<span class="muted small"> · all crops</span>`}
+        ${alt ? `<br><span class="small">🌿 Gentler option: ${esc(alt[1])}</span>` : ""}</span></li>`;
+    }).join("")}</ul>
+    <p class="small muted" style="margin:8px 0 0">Always stay within the label's maximum dose and number of applications.
+      Check approval on the <a href="https://secure.pesticides.gov.uk/pestreg/" target="_blank" rel="noopener">HSE register</a>.
+      <a href="#/setup/3">Edit</a></p></div>`;
+}
+
 // ------------------------------------------------------------------ crop landing page
 async function cropPage(itemId) {
   setTabs("dashboard");
@@ -635,8 +883,6 @@ async function cropPage(itemId) {
   const ok = d.weather.status !== "unavailable";
   const today = new Date().toISOString().slice(0, 10);
   const w = a.water || {};
-  const waterBig = !ok ? "—" : w.status === "water" || w.status === "no_past_rain" ? `${w.add_l_per_m2} L/m²`
-    : w.status === "unavailable" ? "—" : "0 L/m²";
   const above = `
     <p><a href="#/dashboard">← Dashboard</a></p>
     <div class="crop-hero">
@@ -672,39 +918,52 @@ async function cropPage(itemId) {
         </article>`).join("") : `<div class="notice info">✅ No storms, frost, heat, flooding or drought risk in the next 7 days.</div>`}` : ""}`;
   const below = [
     ok ? `<h2>Water</h2>
-      <div class="card">
-        <div class="big-number"><span>${waterBig}</span><small>to add this week</small></div>
-        <p>${esc(w.summary || "")}</p>
-        ${w.crop_use_mm != null ? `<ul class="plain small muted">
-          <li>Crop water use (last 7 days): ≈${w.crop_use_mm} mm (reference evaporation × crop factor ${w.kc}${w.estimated ? ", estimated" : ""})</li>
-          <li>Rain: ${w.rain_mm != null ? `${w.rain_mm} mm, ${esc(w.rain_source)}` : "not available"}</li>
-          <li>Forecast rain: ${w.forecast_rain_3d_mm} mm in 3 days, ${w.forecast_rain_7d_mm} mm in 7 days</li>
-          <li>1 mm of water = 1 litre per square metre. Check soil at finger depth before watering.</li></ul>` : ""}
+      <div class="card water-card">
+        ${glassSVG(w)}
+        <div class="water-text">
+          <p class="headline">${waterHeadline(w)}</p>
+          <p>${esc(w.summary || "")}</p>
+          ${w.crop_use_mm != null ? `<details><summary>How we worked this out</summary><ul class="plain small muted">
+            <li>Your ${esc(item.name.toLowerCase())} used ≈${w.crop_use_mm} mm of water in the last 7 days
+              (reference evaporation × crop factor ${w.kc}${w.estimated ? ", estimated" : ""}).</li>
+            <li>Rain: ${w.rain_mm != null ? `${w.rain_mm} mm, ${esc(w.rain_source)}` : "not available"}.</li>
+            <li>Forecast rain: ${w.forecast_rain_3d_mm} mm in the next 3 days, ${w.forecast_rain_7d_mm} mm in 7 days.</li>
+            <li>1 mm of water = 1 litre per square metre. A full glass here means 25 L/m², a very dry week.</li>
+            <li>Check the soil at finger depth before watering.</li></ul></details>` : ""}
+        </div>
       </div>` : "",
     ok ? `<h2>Sunlight and temperature</h2>
-      <div class="card"><p>☀️ ${esc(a.sun.summary)}${a.sun.estimated ? ` <span class="muted small">(estimated from cloud cover)</span>` : ""}</p>
-        <p style="margin:0">🌡️ ${esc(a.temperature.summary)}</p></div>` : "",
+      <div class="card">
+        ${sunMeter(a.sun, g)}
+        ${tempMeter(a.temperature, g)}
+      </div>` : "",
     `<h2>Growing guide</h2>
       <div class="card">
-        <dl class="review">
-          <dt>Sunlight</dt><dd>~${g.sun_hours} h a day</dd>
-          <dt>Temperature</dt><dd>${g.temp_c.min}–${g.temp_c.max} °C</dd>
-          <dt>Soil pH</dt><dd>${esc(g.ph)}</dd>
-          ${g.harvest_days ? `<dt>Time to harvest</dt><dd>${g.harvest_days[0]}–${g.harvest_days[1]} days</dd>` : ""}
-          <dt>Water use</dt><dd>Crop factor ${g.kc.ini} → ${g.kc.mid} → ${g.kc.end} (FAO-56)</dd>
-        </dl>
+        <div class="facts">
+          <div><span>☀️</span><b>~${g.sun_hours} h</b><small>sun a day</small></div>
+          <div><span>🌡️</span><b>${g.temp_c.min}–${g.temp_c.max} °C</b><small>ideal range</small></div>
+          <div><span>🧪</span><b>pH ${esc(g.ph)}</b><small>soil</small></div>
+          ${g.harvest_days ? `<div><span>🧺</span><b>${g.harvest_days[0]}–${g.harvest_days[1]} days</b><small>to harvest</small></div>` : ""}
+          <div><span>💧</span><b>${g.kc.ini} → ${g.kc.mid} → ${g.kc.end}</b><small>water factor (FAO-56)</small></div>
+        </div>
         <p style="margin:12px 0 0">${esc(g.notes)}</p>
       </div>`,
+    pesticideSection(d, item),
     `<h2>Pests and bio-friendly protection</h2>
-      ${g.pests.map((p) => `<div class="card"><h3>${esc(p.name)}</h3><p class="muted small">${esc(p.signs)}</p>
-        <ul class="plain">${p.controls.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>`).join("")}`,
+      <div class="card pests">${g.pests.map((p) => `
+        <details><summary><b>${esc(p.name)}</b><span class="muted small">${esc(p.signs)}</span></summary>
+          <p class="try-first">✅ <b>Try first:</b> ${esc(p.controls[0])}</p>
+          ${p.controls.length > 1 ? `<ul class="plain">${p.controls.slice(1).map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
+        </details>`).join("")}
+        <p class="small muted" style="margin:10px 0 0">Tap a pest to see what to do.</p></div>`,
     `<h2>For a better yield</h2>
-      <div class="card"><ul class="plain">${g.feeds.map((x) => `<li><b>${esc(x.name)}</b>: ${esc(x.use)}</li>`).join("")}</ul>
-      <p class="small muted" style="margin:0">⚠️ ${esc(d.caveat)}</p></div>`,
+      <div class="card"><ul class="yield-list">${g.feeds.map((x) => `<li><b>${esc(x.name)}</b><span>${esc(x.use)}</span></li>`).join("")}</ul>
+      <p class="small muted" style="margin:8px 0 0">⚠️ ${esc(d.caveat)}</p></div>`,
     `<h2>Sources</h2>
-      <div class="card"><ul class="plain small">${g.sources.map((x) => `<li>${x.url
-        ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</li>`).join("")}</ul>
-      <p class="small muted" style="margin:0">Crop values compiled from published guidance; pending agronomist review.</p></div>`,
+      <div class="card"><details><summary>Where this advice comes from (${g.sources.length})</summary>
+        <ul class="plain small">${g.sources.map((x) => `<li>${x.url
+          ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</li>`).join("")}</ul></details>
+      <p class="small muted" style="margin:8px 0 0">Crop values compiled from published guidance; pending agronomist review.</p></div>`,
   ];
   render(plant(above, below));
   document.getElementById("pdform").onsubmit = async (e) => {
@@ -847,10 +1106,12 @@ async function profile() {
         <dt>Size</dt><dd>${esc(label(SIZES, draft.size_category))}${draft.area_value ? ` · ${draft.area_value} ${esc(draft.area_unit)}` : ""}</dd>
         <dt>Production</dt><dd>${esc(draft.production_types.map((t) => label(PRODUCTION, t)).join(", ") || "—")}</dd>
         <dt>Crops / animals</dt><dd>${esc(draft.production_items.map((p) => p.name + (p.growth_stage ? ` (${humanize(p.growth_stage)})` : "")).join(", ") || "—")}</dd>
+        <dt>Pesticides</dt><dd>${esc(pestSummary(draft) || "Not provided")}</dd>
       </dl>
       <div class="row" style="margin-top:12px">
         <a class="btn secondary" href="#/setup/1">Edit location &amp; size</a>
         <a class="btn secondary" href="#/setup/2">Edit crops &amp; livestock</a>
+        <a class="btn secondary" href="#/setup/3">Edit pesticides</a>
       </div>
     </div>
     <form class="card" id="condform">

@@ -128,3 +128,18 @@ def test_login_throttle(anon):
     for _ in range(5):
         assert anon.post("/api/auth/login", json={"email": email, "password": "nope-nope"}).status_code == 401
     assert anon.post("/api/auth/login", json={"email": email, "password": "nope-nope"}).status_code == 429
+
+
+def test_pesticides_saved_and_shown_per_crop(client):
+    fid = client.post("/api/farms", json={
+        "latitude": 52.2, "longitude": 0.1, "production_types": ["vegetables"],
+        "production_items": [{"type": "vegetables", "name": "Carrots"}, {"type": "vegetables", "name": "Beetroot"}],
+        "conditions": {"pesticide_use": "some"},
+        "pesticides": [{"product": "Slug pellets (ferric phosphate)", "amount": 50, "unit": "g", "per": "per month"},
+                       {"product": "Insecticidal soap", "amount": 200, "unit": "ml", "per": "per application", "crop": "Beetroot"}],
+        "status": "complete"}).json()
+    assert fid["conditions"]["pesticide_use"] == "some" and len(fid["pesticides"]) == 2
+    carrot = next(i for i in fid["production_items"] if i["name"] == "Carrots")
+    page = client.get(f"/api/farms/{fid['id']}/crops/{carrot['id']}").json()
+    assert [p["product"] for p in page["pesticides"]] == ["Slug pellets (ferric phosphate)"]  # beetroot-only one excluded
+    assert page["advice"]["water"]["status"] in ("water", "ok", "wait", "no_past_rain")
