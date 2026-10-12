@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HedgeRow</title>
+  <meta name="description" content="HedgeRow: weather-based farm risk alerts and practical next steps.">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="brand"><span class="logo" aria-hidden="true">🌱</span> HedgeRow</a>
+    <span id="acct"></span>
+  </header>
+  <main id="app" aria-live="polite"></main>
+  <nav class="tabbar" id="tabbar" hidden>
+    <a href="#/dashboard" data-tab="dashboard">Dashboard</a>
+    <a href="#/history" data-tab="history">History</a>
+    <a href="#/profile" data-tab="profile">Farm profile</a>
+  </nav>
+  <script src="/static/app.js"></script>
+</body>
+</html>
